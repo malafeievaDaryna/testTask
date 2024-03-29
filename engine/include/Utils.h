@@ -13,8 +13,9 @@ namespace utils {
 struct Wall {
     uint32_t width;
     uint32_t height;
-    DirectX::XMFLOAT3 center;
+    DirectX::XMVECTOR center;
     DirectX::XMVECTOR normal;
+    float distanceToOrigin;
     bool isDestroyed{false};
 };
 struct Texture2DResource {

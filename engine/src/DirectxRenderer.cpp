@@ -301,6 +301,8 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     float aspectRatio = static_cast<float>(mWindow->width()) / mWindow->height();
     mProj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(45.0f), aspectRatio, 0.01f, 1000.0f);
 
+    bulletMngr.Fire(DirectX::XMFLOAT3{0.0f, 100.0f, -500.0f}, DirectX::XMFLOAT3{0.0f, 0.0f, 1.0f}, 2.0f, 0.0f, 100.0f);
+
     CreateDeviceAndSwapChain();
 
     mRectScissor = {0, 0, (long)mWindow->width(), (long)mWindow->height()};
@@ -377,11 +379,19 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
         DirectX::XMMATRIX extrudingVertices;
     };
     Instance wallInstance;
-    wallInstance.extrudingVertices.r[0] = DirectX::XMVectorSet(-100.0f, 100.0f, 0.0f, 1.0f);  // Upper Left
-    wallInstance.extrudingVertices.r[1] = DirectX::XMVectorSet(100.0f, 100.0f, 0.0f, 1.0f);   // Upper Right
-    wallInstance.extrudingVertices.r[2] = DirectX::XMVectorSet(100.0f, -100.0f, 0.0f, 1.0f);  // Bottom right
-    wallInstance.extrudingVertices.r[3] = DirectX::XMVectorSet(-100.0f, -100.0f, 0.0f, 1.0f);  // Bottom left
+    wallInstance.extrudingVertices.r[0] = DirectX::XMVectorSet(-100.0f, 100.0f, 100.0f, 1.0f);  // Upper Left
+    wallInstance.extrudingVertices.r[1] = DirectX::XMVectorSet(100.0f, 100.0f, 100.0f, 1.0f);   // Upper Right
+    wallInstance.extrudingVertices.r[2] = DirectX::XMVectorSet(100.0f, -100.0f, 100.0f, 1.0f);  // Bottom right
+    wallInstance.extrudingVertices.r[3] = DirectX::XMVectorSet(-100.0f, -100.0f, 100.0f, 1.0f);  // Bottom left
     wallInstance.extrudingVertices = DirectX::XMMatrixTranspose(wallInstance.extrudingVertices);
+
+    utils::Wall wall;
+    wall.width = 200.0f;
+    wall.height = 200.0f;
+    wall.center = DirectX::XMVectorSet(0.0f, 0.0f, 100.0f, 1.0f);
+    wall.normal = DirectX::XMVectorSet(0.0f, 0.0f, -1.0f, 1.0f);
+    wall.distanceToOrigin = 100.0f;
+    mWalls.push_back(wall);
 
     static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + sizeof(wallInstance);
     static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
