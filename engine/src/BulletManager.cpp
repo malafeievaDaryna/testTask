@@ -1,6 +1,6 @@
 #include "BulletManager.h"
 
-BulletManager::BulletManager() {
+BulletManager::BulletManager(std::vector<utils::Wall>& walls) : mWalls(walls) {
     mBullets.reserve(1500000); // we can have at most ~1 million bullets at once
 }
 

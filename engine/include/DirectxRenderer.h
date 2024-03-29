@@ -10,6 +10,7 @@
 #include <vector>
 #include <directxmath.h>
 #include "Utils.h"
+#include "BulletManager.h"
 
 class Window;
 
@@ -80,6 +81,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> mCommandAllocators[MAX_FRAMES_IN_FLIGHT]{};
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> mCommandLists[MAX_FRAMES_IN_FLIGHT]{};
 
-    utils::Texture2DResource mWallTextureRes;
-    std::vector<utils::Wall> mWalls;
+    utils::Texture2DResource mWallTextureRes{};
+    std::vector<utils::Wall> mWalls{};
+    BulletManager bulletMngr;
 };

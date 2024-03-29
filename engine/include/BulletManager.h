@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <directxmath.h>
+#include "Utils.h"
 
 class BulletManager {
     struct Bullet {
@@ -16,12 +17,13 @@ class BulletManager {
     };
 
 public:
-    BulletManager();
+    BulletManager(std::vector<utils::Wall>& walls);
     ~BulletManager() = default;
 
     void Update(float time_sec);
     void Fire(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& dir, float speed, float time, float life_time);
 
 private:
+    std::vector<utils::Wall>& mWalls;
     std::vector<Bullet> mBullets;
 };

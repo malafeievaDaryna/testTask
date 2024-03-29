@@ -15,6 +15,7 @@ struct Wall {
     uint32_t height;
     DirectX::XMFLOAT3 center;
     DirectX::XMVECTOR normal;
+    bool isDestroyed{false};
 };
 struct Texture2DResource {
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> srvDescriptorHeap;

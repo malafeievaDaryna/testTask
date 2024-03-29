@@ -86,7 +86,8 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(_In_opt_ IDXGIAdapter* adapter,
 }
 }  // namespace
 
-DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr} {
+DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr}, bulletMngr(mWalls) {
+    mWalls.reserve(100000); // we can have at most ~100000 walls at once
 }
 
 DirectXRenderer::~DirectXRenderer() {
@@ -97,6 +98,7 @@ void DirectXRenderer::Render() {
     static auto startTime = std::chrono::high_resolution_clock::now();
     static auto endTime = std::chrono::high_resolution_clock::now();
     static float deltaTimeMS = 0.0f;
+    static float globalLifeCycleTimeMS = 0.0f;
 
     // waiting for completion of frame processing on gpu
     WaitForFence(mFrameFences[m_currentFrame].Get(), mFenceValues[m_currentFrame], mFrameFenceEvents[m_currentFrame]);
@@ -127,6 +129,7 @@ void DirectXRenderer::Render() {
 
     commandList->ResourceBarrier(1, &barrierBefore);
 
+    bulletMngr.Update(globalLifeCycleTimeMS / 1000.0f);
     UpdateConstantBuffer();
 
     static const float clearColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -180,6 +183,7 @@ void DirectXRenderer::Render() {
 
     endTime = std::chrono::high_resolution_clock::now();
     deltaTimeMS = std::chrono::duration<float, std::chrono::milliseconds::period>(endTime - startTime).count();
+    globalLifeCycleTimeMS += deltaTimeMS;
     startTime = endTime;
 }
 
@@ -349,7 +353,7 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
 
 void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommandList) {
     struct Vertex {
-        float position[4];
+        uint32_t extrudingVertexID;
         float uv[2];
     };
 
@@ -357,34 +361,29 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     // Otherwise, we would need to explicitly wait for the GPU to copy data from the upload buffer
     // to vertex/index default buffers due to how the GPU processes commands asynchronously.
     static const Vertex vertices[4] = {// Upper Left
-                                       {{1.0f, 1.0f, 0.0f, 0.0f}, {0, 0}},
+                                       {0u, {0, 0}},
                                        // Upper Right
-                                       {{1.0f, 1.0f, 0.0f, 1.0f}, {1, 0}},
+                                       {1u, {1, 0}},
                                        // Bottom right
-                                       {{1.0f, 1.0f, 0.0f, 2.0f}, {1, 1}},
+                                       {2u, {1, 1}},
                                        // Bottom left
-                                       {{1.0f, 1.0f, 0.0f, 3.0f}, {0, 1}}};
+                                       {3u, {0, 1}}};
 
     static const int indices[6] = {0, 1, 2, 2, 3, 0};
 
     //------------------------------------------------------------------//
     // Creation of instances
     struct Instance {
-        float extrudingVertex1[4];
-        float extrudingVertex2[4];
-        float extrudingVertex3[4];
-        float extrudingVertex4[4];
+        DirectX::XMMATRIX extrudingVertices;
     };
-    static const Instance extrudingVertices = {// Upper Left
-                                               {-100.0f, 100.0f, 0.0f, 1.0f},
-                                               // Upper Right
-                                               {100.0f, 100.0f, 0.0f, 1.0f},
-                                               // Bottom right
-                                               {100.0f, -100.0f, 0.0f, 1.0f},
-                                               // Bottom left
-                                               {-100.0f, -100.0f, 0.0f, 1.0f}};
+    Instance wallInstance;
+    wallInstance.extrudingVertices.r[0] = DirectX::XMVectorSet(-100.0f, 100.0f, 0.0f, 1.0f);  // Upper Left
+    wallInstance.extrudingVertices.r[1] = DirectX::XMVectorSet(100.0f, 100.0f, 0.0f, 1.0f);   // Upper Right
+    wallInstance.extrudingVertices.r[2] = DirectX::XMVectorSet(100.0f, -100.0f, 0.0f, 1.0f);  // Bottom right
+    wallInstance.extrudingVertices.r[3] = DirectX::XMVectorSet(-100.0f, -100.0f, 0.0f, 1.0f);  // Bottom left
+    wallInstance.extrudingVertices = DirectX::XMMatrixTranspose(wallInstance.extrudingVertices);
 
-    static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + sizeof(extrudingVertices);
+    static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + sizeof(wallInstance);
     static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     static const auto uploadBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
 
@@ -405,7 +404,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &indexBufferDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mIndexBuffer));
 
-    static const auto instanceBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(extrudingVertices));
+    static const auto instanceBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(wallInstance));
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &instanceBufferDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mInstanceBuffer));
 
@@ -420,7 +419,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     // Create buffer views
     mInstanceBufferView.BufferLocation = mInstanceBuffer->GetGPUVirtualAddress();
-    mInstanceBufferView.SizeInBytes = sizeof(extrudingVertices);
+    mInstanceBufferView.SizeInBytes = sizeof(wallInstance);
     mInstanceBufferView.StrideInBytes = sizeof(Instance);
 
     // Copy data on CPU into the upload buffer
@@ -428,7 +427,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     mUploadBuffer->Map(0, nullptr, &p);
     ::memcpy(p, vertices, sizeof(vertices));
     ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices), indices, sizeof(indices));
-    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &extrudingVertices, sizeof(extrudingVertices));
+    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &wallInstance, sizeof(wallInstance));
     mUploadBuffer->Unmap(0, nullptr);
 
     // Copy data from upload buffer on CPU into the index/vertex buffer on
@@ -436,7 +435,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     uploadCommandList->CopyBufferRegion(mVertexBuffer.Get(), 0, mUploadBuffer.Get(), 0, sizeof(vertices));
     uploadCommandList->CopyBufferRegion(mIndexBuffer.Get(), 0, mUploadBuffer.Get(), sizeof(vertices), sizeof(indices));
     uploadCommandList->CopyBufferRegion(mInstanceBuffer.Get(), 0, mUploadBuffer.Get(), sizeof(vertices) + sizeof(indices),
-                                        sizeof(extrudingVertices));
+                                        sizeof(wallInstance));
 
     // Barriers, batch them together
     const CD3DX12_RESOURCE_BARRIER barriers[3] = {
@@ -452,8 +451,8 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
 void DirectXRenderer::CreatePipelineStateObject() {
     static const D3D12_INPUT_ELEMENT_DESC layout[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"EXTRUDVERTID", 0, DXGI_FORMAT_R32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 4, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"INSTANCEEXTRUDINGVERTS", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
         {"INSTANCEEXTRUDINGVERTS", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
         {"INSTANCEEXTRUDINGVERTS", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
