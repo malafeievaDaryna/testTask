@@ -24,6 +24,11 @@ public:
     void Fire(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& dir, float speed, float time, float life_time);
 
 private:
+    bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, const utils::Wall& wall,
+                                              float& out_timeIntersection,
+                                              DirectX::XMFLOAT3& out_intersectionPoint);
+
+private:
     std::vector<utils::Wall>& mWalls;
     std::vector<Bullet> mBullets;
 };

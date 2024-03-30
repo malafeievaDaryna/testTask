@@ -3,6 +3,7 @@ const char vs_shader[] =
     "cbuffer PerFaceConstants : register (b0)\n"
     "{\n"
     "	matrix MVP;\n"
+    "	uint isWallDestroyed[1];\n"
     "}\n"
     "struct VertexShaderOutput\n"
     "{\n"
@@ -16,9 +17,14 @@ const char vs_shader[] =
     "	uint id: SV_InstanceID)\n"
     "{\n"
     "	VertexShaderOutput output;\n"
+    "   if (isWallDestroyed[id] == 0) {\n"
     "   float4 extruded = instanceExtrudingVer[extrudVertID];\n"
     "   output.position = mul(MVP, extruded);\n"
     "	output.uv = uv;\n"
+    "	} else {\n"
+    "	/*primitive discarding by degradating triangle with putting outside NDC */\n"
+    "	output.position = float4(100, 100, 100, 1);\n"
+    "	}\n"
     "	return output;\n"
     "}\n";
 const char fs_shader[] =

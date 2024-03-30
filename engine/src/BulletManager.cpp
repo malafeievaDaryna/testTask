@@ -1,43 +1,65 @@
 #include "BulletManager.h"
+#include <limits>
 
 using namespace DirectX;
 
+namespace {
+static float EPSILON = std::numeric_limits<float>::epsilon();
+}
+
 BulletManager::BulletManager(std::vector<utils::Wall>& walls) : mWalls(walls) {
-    mBullets.reserve(1500000); // we can have at most ~1 million bullets at once
+    mBullets.reserve(1500000);  // we can have at most ~1 million bullets at once
+}
+
+// return false if there is no intersection, the time and point of intersection returned over param out_...
+bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, const utils::Wall& wall,
+                                          float& out_timeIntersection,
+                                          XMFLOAT3& out_intersectionPoint) {
+    // checking for intersection of ray with plane 
+    // by placing line\ray equation R(t) = R0 + t * Rd into plane equation  Ax + By + Cz + D = 0
+    // => A(X0 + Xd * t) + B(Y0 + Yd * t) + C(Z0 + Zd * t) + D = 0
+    XMVECTOR N = wall.normal;                // A B C from plane equation
+    XMVECTOR P = bullet.pos;                 // start pos of the ray
+    XMVECTOR V = time_sec * bullet.speed * bullet.dir;  // velocity of the line equation or acceleration dir * time
+    float D = wall.distanceToOrigin;         // D from plane equation
+
+    float& t = out_timeIntersection;
+
+    // for getting time of intersection
+    // t = -(AX0 + BY0 + CZ0 + D) / (AXd + BYd + CZd)
+    // t = -(N · P + D) / (N · V) where (N · V) is denom
+    float denom = XMVectorGetX(DirectX::XMVector3Dot(N, V));
+
+    // preventing from dividing by zero if the ray is parallel to the plane and there is no intersection:
+    if (abs(denom) <= EPSILON) {
+        utils::log_debug("no intersection");
+        return false;
+    }
+
+    // t = -(N · P + D) / denom;
+    t = -(XMVectorGetX(XMVector3Dot(N, P)) + D) / denom;
+
+    // If t < 0 then the ray intersects plane behind origin, i.e. no intersection of interest
+    if (t <= EPSILON) {
+        utils::log_debug("no intersection");
+        return false;
+    }
+
+    XMStoreFloat3(&out_intersectionPoint, XMVectorAdd(P, t * V));
 }
 
 void BulletManager::Update(float time_sec) {
     utils::log_debug("cur time s", time_sec);
     auto& wall = mWalls[0];
     auto& bullet = mBullets[0];
-    DirectX::XMVECTOR N = wall.normal;
-    DirectX::XMVECTOR P = bullet.pos;
-    DirectX::XMVECTOR V = bullet.dir;
-    float D = wall.distanceToOrigin;
-    
-    float denom = DirectX::XMVectorGetX(DirectX::XMVector3Dot(N, V));
-
-    // Prevent divide by zero:
-    if (abs(denom) <= 1e-4f) {
-        utils::log_debug("denom small");
-        return;
-    }
-
-
-    //float t = -(dot(n, p) + d) / dot(n, v);
-    float t = -(DirectX::XMVectorGetX(DirectX::XMVector3Dot(N, P)) + D) / denom;
-
-    // Use pointy end of the ray.
-    // It is technically correct to compare t < 0,
-    // but that may be undesirable in a raytracer.
-    if (t <= 1e-4) {
-        utils::log_debug("denom small");
-        return;    
-    }
-
+    float timeIntersection = 0.0f;
     XMFLOAT3 intersectionPoint;
-    XMStoreFloat3(&intersectionPoint, XMVectorAdd(P, t * V));
-    utils::log_info("intersection happens at point", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z, " time ", t);
+    if (getTimeOfIntersection(time_sec, bullet, wall, timeIntersection, intersectionPoint)) {
+        /*utils::log_debug("intersection happens at point", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z,
+                            " time ",
+                         timeIntersection);*/
+        wall.isDestroyed = timeIntersection <= 1.0f;
+    }
 }
 
 void BulletManager::Fire(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& dir, float speed, float time, float life_time) {

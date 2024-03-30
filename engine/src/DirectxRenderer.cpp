@@ -86,7 +86,7 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(_In_opt_ IDXGIAdapter* adapter,
 }
 }  // namespace
 
-DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr}, bulletMngr(mWalls) {
+DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr}, mBulletMngr(mWalls) {
     mWalls.reserve(100000); // we can have at most ~100000 walls at once
 }
 
@@ -129,7 +129,7 @@ void DirectXRenderer::Render() {
 
     commandList->ResourceBarrier(1, &barrierBefore);
 
-    bulletMngr.Update(globalLifeCycleTimeMS / 1000.0f);
+    mBulletMngr.Update(globalLifeCycleTimeMS / 1000.0f);
     UpdateConstantBuffer();
 
     static const float clearColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -301,7 +301,7 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     float aspectRatio = static_cast<float>(mWindow->width()) / mWindow->height();
     mProj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(45.0f), aspectRatio, 0.01f, 1000.0f);
 
-    bulletMngr.Fire(DirectX::XMFLOAT3{0.0f, 100.0f, -500.0f}, DirectX::XMFLOAT3{0.0f, 0.0f, 1.0f}, 2.0f, 0.0f, 100.0f);
+    mBulletMngr.Fire(DirectX::XMFLOAT3{0.0f, 100.0f, -500.0f}, DirectX::XMFLOAT3{0.0f, 0.0f, 1.0f}, 100.0f, 0.0f, 100.0f);
 
     CreateDeviceAndSwapChain();
 
@@ -576,6 +576,10 @@ void DirectXRenderer::UpdateConstantBuffer() {
 
     DirectX::XMMATRIX modelView = DirectX::XMMatrixMultiply(mModel, mView);
     mConstantBufferData.mvp = DirectX::XMMatrixMultiply(modelView, mProj);
+
+    for (std::size_t i = 0u; i < mWalls.size(); ++i) {
+        mConstantBufferData.isWallDestroyed[i] = mWalls[i].isDestroyed;
+    }
 
     void* data;
     mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);

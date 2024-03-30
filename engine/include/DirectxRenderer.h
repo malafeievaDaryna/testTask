@@ -15,10 +15,12 @@
 class Window;
 
 class DirectXRenderer {
+    static constexpr uint32_t WALLS_AMOUNT = 1;
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
     static constexpr DXGI_FORMAT DEPTH_FORMAT = DXGI_FORMAT_D32_FLOAT;
     struct ConstantBuffer {
         DirectX::XMMATRIX mvp;
+        uint32_t isWallDestroyed[WALLS_AMOUNT];
     };
 public:
     DirectXRenderer();
@@ -83,5 +85,5 @@ private:
 
     utils::Texture2DResource mWallTextureRes{};
     std::vector<utils::Wall> mWalls{};
-    BulletManager bulletMngr;
+    BulletManager mBulletMngr;
 };
