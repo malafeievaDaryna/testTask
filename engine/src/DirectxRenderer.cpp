@@ -13,20 +13,21 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <random>
 
 using namespace Microsoft::WRL;
+using namespace DirectX;
 using namespace utils;
 
 namespace {
-const DirectX::XMVECTOR eye = DirectX::XMVectorSet(0, 100, -500, 1);
-const DirectX::XMVECTOR target = DirectX::XMVectorSet(0, 0, 0, 1);
-const DirectX::XMVECTOR up = DirectX::XMVectorSet(0, 1, 0, 0);
+static const XMVECTOR EYE = XMVectorSet(0, 0, -700, 1);
+static const XMVECTOR TARGET = XMVectorSet(0, 0, 0, 1);
+static const XMVECTOR UP = XMVectorSet(0, 1, 0, 0);
 struct RenderEnvironment {
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<IDXGISwapChain> swapChain;
 };
-
 void WaitForFence(ID3D12Fence* fence, UINT64 completionValue, HANDLE waitEvent) {
     if (fence->GetCompletedValue() < completionValue) {
         fence->SetEventOnCompletion(completionValue, waitEvent);
@@ -86,7 +87,7 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(_In_opt_ IDXGIAdapter* adapter,
 }
 }  // namespace
 
-DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr}, mBulletMngr(mWalls) {
+DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr}, mWallInstance(WALLS_AMOUNT, WallInstance{}), mBulletMngr(mWalls) {
     mWalls.reserve(100000); // we can have at most ~100000 walls at once
 }
 
@@ -153,7 +154,7 @@ void DirectXRenderer::Render() {
     commandList->IASetVertexBuffers(0, 1, &mVertexBufferView);
     commandList->IASetVertexBuffers(1, 1, &mInstanceBufferView);
     commandList->IASetIndexBuffer(&mIndexBufferView);
-    commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
+    commandList->DrawIndexedInstanced(6, mWalls.size(), 0, 0, 0); // drawing 100000 instances of the wall
 
     D3D12_RESOURCE_BARRIER barrierAfter;
     barrierAfter.Transition.pResource = mRenderTargets[m_currentFrame].Get();
@@ -289,7 +290,7 @@ void DirectXRenderer::SetupSwapChain() {
 
 void DirectXRenderer::Initialize(const std::string& title, int width, int height) {
     // Check for DirectX Math library support.
-    if (!DirectX::XMVerifyCPUSupport()) {
+    if (!XMVerifyCPUSupport()) {
         MessageBoxA(NULL, "Failed to verify DirectX Math library support.", "Error", MB_OK | MB_ICONERROR);
         std::exit(-1);
     }
@@ -297,11 +298,11 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     mWindow.reset(new Window("DirectXMiniGame", 1280, 720));
     mWindow.get_deleter() = [](Window* ptr) { delete ptr; };
 
-    mView = DirectX::XMMatrixLookAtLH(eye, target, up);
+    mView = XMMatrixLookAtLH(EYE, TARGET, UP);
     float aspectRatio = static_cast<float>(mWindow->width()) / mWindow->height();
-    mProj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(45.0f), aspectRatio, 0.01f, 1000.0f);
+    mProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(45.0f), aspectRatio, 0.01f, zFar);
 
-    mBulletMngr.Fire(DirectX::XMFLOAT3{0.0f, 100.0f, -500.0f}, DirectX::XMFLOAT3{0.0f, 0.0f, 1.0f}, 100.0f, 0.0f, 100.0f);
+    mBulletMngr.Fire(XMFLOAT3{0.0f, 100.0f, -500.0f}, XMFLOAT3{0.0f, 0.0f, 1.0f}, 100.0f, 0.0f, 100.0f);
 
     CreateDeviceAndSwapChain();
 
@@ -373,27 +374,45 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     static const int indices[6] = {0, 1, 2, 2, 3, 0};
 
-    //------------------------------------------------------------------//
-    // Creation of instances
-    struct Instance {
-        DirectX::XMMATRIX extrudingVertices;
-    };
-    Instance wallInstance;
-    wallInstance.extrudingVertices.r[0] = DirectX::XMVectorSet(-100.0f, 100.0f, 100.0f, 1.0f);  // Upper Left
-    wallInstance.extrudingVertices.r[1] = DirectX::XMVectorSet(100.0f, 100.0f, 100.0f, 1.0f);   // Upper Right
-    wallInstance.extrudingVertices.r[2] = DirectX::XMVectorSet(100.0f, -100.0f, 100.0f, 1.0f);  // Bottom right
-    wallInstance.extrudingVertices.r[3] = DirectX::XMVectorSet(-100.0f, -100.0f, 100.0f, 1.0f);  // Bottom left
-    wallInstance.extrudingVertices = DirectX::XMMatrixTranspose(wallInstance.extrudingVertices);
-
+    //-----------------------------------------------------//
+    // THE WALL GENERATOR
+    std::random_device rd;
+    std::mt19937 gen(rd());  // seed the generator
+    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+    std::default_random_engine generator;
+    static const XMVECTOR NORMAL = XMVectorSet(0.0f, 0.0f, -1.0f, 1.0f);
+    static const XMVECTOR SIDE = XMVector3Cross(NORMAL, UP);
     utils::Wall wall;
-    wall.width = 200.0f;
-    wall.height = 200.0f;
-    wall.center = DirectX::XMVectorSet(0.0f, 0.0f, 100.0f, 1.0f);
-    wall.normal = DirectX::XMVectorSet(0.0f, 0.0f, -1.0f, 1.0f);
-    wall.distanceToOrigin = 100.0f;
-    mWalls.push_back(wall);
+    for (std::size_t i = 0u; i < WALLS_AMOUNT; ++i) {
+        float centerZ = randomFloats(generator) * 0.3 * zFar;  // in positive Z axis
+        float centerX = (2.0f * randomFloats(generator) - 1.0f) * 0.3 * zFar;
+        float centerY = 0.0f;
+        wall.center = XMVectorSet(centerX, centerY, centerZ, 1.0f);
+        wall.distanceToOrigin = XMVectorGetX(XMVector3Length(wall.center));
+        wall.width = randomFloats(generator) * 100.0f;
+        wall.height = randomFloats(generator) * 100.0f;
+        wall.normal = NORMAL;
+        XMFLOAT3 top, bottom, left, right;
+        XMStoreFloat3(&top, XMVectorAdd(wall.center, 0.5f * wall.height * UP));
+        XMStoreFloat3(&bottom, XMVectorAdd(wall.center, -0.5f * wall.height * UP));
+        XMStoreFloat3(&left, XMVectorAdd(wall.center, -0.5f * wall.width * SIDE));
+        XMStoreFloat3(&right, XMVectorAdd(wall.center, 0.5f * wall.width * SIDE));
+        wall.topY = top.y;
+        wall.bottomY = bottom.y;
+        wall.leftX = left.x;
+        wall.rightX = right.x;
+        mWalls.push_back(wall);
 
-    static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + sizeof(wallInstance);
+        mWallInstance[i].extrudingVectors.r[0] = XMVectorSet(left.x, top.y, centerZ, 1.0f);    // Upper Left
+        mWallInstance[i].extrudingVectors.r[1] = XMVectorSet(right.x, top.y, centerZ, 1.0f);    // Upper Right
+        mWallInstance[i].extrudingVectors.r[2] = XMVectorSet(right.x, bottom.y, centerZ, 1.0f);  // Bottom right
+        mWallInstance[i].extrudingVectors.r[3] = XMVectorSet(left.x, bottom.y, centerZ, 1.0f);  // Bottom left
+        mWallInstance[i].extrudingVectors =
+        XMMatrixTranspose(mWallInstance[i].extrudingVectors);  // since picking rows in vertex shader returns me collumns we need to transpose matrix
+    }
+
+    static const int wallsBytesCapacity = WALLS_AMOUNT * sizeof(WallInstance);
+    static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + wallsBytesCapacity;
     static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     static const auto uploadBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
 
@@ -414,7 +433,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &indexBufferDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mIndexBuffer));
 
-    static const auto instanceBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(wallInstance));
+    static const auto instanceBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(wallsBytesCapacity);
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &instanceBufferDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mInstanceBuffer));
 
@@ -429,15 +448,15 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     // Create buffer views
     mInstanceBufferView.BufferLocation = mInstanceBuffer->GetGPUVirtualAddress();
-    mInstanceBufferView.SizeInBytes = sizeof(wallInstance);
-    mInstanceBufferView.StrideInBytes = sizeof(Instance);
+    mInstanceBufferView.SizeInBytes = wallsBytesCapacity;
+    mInstanceBufferView.StrideInBytes = sizeof(WallInstance);
 
     // Copy data on CPU into the upload buffer
     void* p;
     mUploadBuffer->Map(0, nullptr, &p);
     ::memcpy(p, vertices, sizeof(vertices));
     ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices), indices, sizeof(indices));
-    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &wallInstance, sizeof(wallInstance));
+    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &mWallInstance[0], wallsBytesCapacity);
     mUploadBuffer->Unmap(0, nullptr);
 
     // Copy data from upload buffer on CPU into the index/vertex buffer on
@@ -445,7 +464,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     uploadCommandList->CopyBufferRegion(mVertexBuffer.Get(), 0, mUploadBuffer.Get(), 0, sizeof(vertices));
     uploadCommandList->CopyBufferRegion(mIndexBuffer.Get(), 0, mUploadBuffer.Get(), sizeof(vertices), sizeof(indices));
     uploadCommandList->CopyBufferRegion(mInstanceBuffer.Get(), 0, mUploadBuffer.Get(), sizeof(vertices) + sizeof(indices),
-                                        sizeof(wallInstance));
+                                        wallsBytesCapacity);
 
     // Barriers, batch them together
     const CD3DX12_RESOURCE_BARRIER barriers[3] = {
@@ -569,16 +588,12 @@ void DirectXRenderer::CreateConstantBuffer() {
 }
 
 void DirectXRenderer::UpdateConstantBuffer() {
-    static float angle = 0.0f;
-    // angle += 0.1f;
-    const DirectX::XMVECTOR rotationAxis = DirectX::XMVectorSet(0, 1, 0, 0);
-    mModel = DirectX::XMMatrixRotationAxis(rotationAxis, DirectX::XMConvertToRadians(angle));
-
-    DirectX::XMMATRIX modelView = DirectX::XMMatrixMultiply(mModel, mView);
-    mConstantBufferData.mvp = DirectX::XMMatrixMultiply(modelView, mProj);
+    mConstantBufferData.mvp = XMMatrixMultiply(mView, mProj);
 
     for (std::size_t i = 0u; i < mWalls.size(); ++i) {
-        mConstantBufferData.isWallDestroyed[i] = mWalls[i].isDestroyed;
+        uint32_t index = i / 32; // producing of packed index
+        uint32_t value = mWalls[i].isDestroyed ? 1u : 0u;
+        mConstantBufferData.isWallDestroyed[index] = (value << (i % 32));
     }
 
     void* data;

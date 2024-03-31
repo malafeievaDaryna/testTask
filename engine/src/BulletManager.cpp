@@ -46,6 +46,14 @@ bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, 
     }
 
     XMStoreFloat3(&out_intersectionPoint, XMVectorAdd(P, t * V));
+
+    // the plain is limited in width and height and we should ensure that point of intersection fots into bounding box of wall
+    if (out_intersectionPoint.x >= wall.leftX && out_intersectionPoint.x <= wall.rightX &&
+        out_intersectionPoint.y >= wall.bottomY && out_intersectionPoint.y <= wall.topY) {
+        return true;
+    }
+
+    return false;
 }
 
 void BulletManager::Update(float time_sec) {

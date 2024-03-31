@@ -15,6 +15,7 @@ struct Wall {
     uint32_t height;
     DirectX::XMVECTOR center;
     DirectX::XMVECTOR normal;
+    float topY, bottomY, leftX, rightX;
     float distanceToOrigin;
     bool isDestroyed{false};
 };

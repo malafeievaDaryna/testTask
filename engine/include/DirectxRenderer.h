@@ -15,12 +15,19 @@
 class Window;
 
 class DirectXRenderer {
-    static constexpr uint32_t WALLS_AMOUNT = 1;
+    static constexpr uint32_t WALLS_AMOUNT = 100000;
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
     static constexpr DXGI_FORMAT DEPTH_FORMAT = DXGI_FORMAT_D32_FLOAT;
+    static constexpr float zFar = 1000.0f;
+
+    // wall Instance consists of 4 extruding vectors for quad positioning (keeping actual vertices of wall like 4 rows of matrix)
+    struct WallInstance {
+        DirectX::XMMATRIX extrudingVectors;
+    };
+
     struct ConstantBuffer {
         DirectX::XMMATRIX mvp;
-        uint32_t isWallDestroyed[WALLS_AMOUNT];
+        uint32_t isWallDestroyed[4000]; // we can not store more than 4096 entries due to limitation that's why we pack 32 walls in one uint32
     };
 public:
     DirectXRenderer();
@@ -85,5 +92,6 @@ private:
 
     utils::Texture2DResource mWallTextureRes{};
     std::vector<utils::Wall> mWalls{};
+    std::vector<WallInstance> mWallInstance{};  // GPU data only
     BulletManager mBulletMngr;
 };
