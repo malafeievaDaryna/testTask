@@ -14,6 +14,7 @@
 #include <cassert>
 #include <chrono>
 #include <random>
+#include <map>
 
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx12.h>
@@ -448,6 +449,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     static const XMVECTOR NORMAL = XMVectorSet(0.0f, 0.0f, -1.0f, 1.0f);
     static const XMVECTOR SIDE = XMVector3Cross(NORMAL, UP);
     utils::Wall wall;
+    std::multimap<float, utils::Wall> sortedWallsByZ;
     for (std::size_t i = 0u; i < WALLS_AMOUNT; ++i) {
         float centerZ = randomFloats(generator) * 0.3 * zFar;  // in positive Z axis
         float centerX = (2.0f * randomFloats(generator) - 1.0f) * 0.3 * zFar;
@@ -466,14 +468,22 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
         wall.bottomY = bottom.y;
         wall.leftX = left.x;
         wall.rightX = right.x;
-        mWalls.push_back(wall);
+        sortedWallsByZ.emplace(centerZ, wall);
+    }
 
-        mWallInstance[i].extrudingVectors.r[0] = XMVectorSet(left.x, top.y, centerZ, 1.0f);    // Upper Left
-        mWallInstance[i].extrudingVectors.r[1] = XMVectorSet(right.x, top.y, centerZ, 1.0f);    // Upper Right
-        mWallInstance[i].extrudingVectors.r[2] = XMVectorSet(right.x, bottom.y, centerZ, 1.0f);  // Bottom right
-        mWallInstance[i].extrudingVectors.r[3] = XMVectorSet(left.x, bottom.y, centerZ, 1.0f);  // Bottom left
-        mWallInstance[i].extrudingVectors =
-        XMMatrixTranspose(mWallInstance[i].extrudingVectors);  // since picking rows in vertex shader returns me collumns we need to transpose matrix
+    // Important !!! sorting walls by ascending order of Z component to get benefit of early depth test
+    std::size_t i = 0u;
+    for (auto& item : sortedWallsByZ) {
+        auto& wall = item.second;
+        mWalls.push_back(wall);
+        float centerZ = item.first;
+        mWallInstance[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, centerZ, 1.0f);     // Upper Left
+        mWallInstance[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, centerZ, 1.0f);    // Upper Right
+        mWallInstance[i].extrudingVectors.r[2] = XMVectorSet(wall.rightX, wall.bottomY, centerZ, 1.0f); // Bottom right
+        mWallInstance[i].extrudingVectors.r[3] = XMVectorSet(wall.leftX, wall.bottomY, centerZ, 1.0f);  // Bottom left
+        // since picking rows in vertex shader returns me collumns we need to transpose matrix
+        mWallInstance[i].extrudingVectors = XMMatrixTranspose(mWallInstance[i].extrudingVectors);  
+        ++i;
     }
 
     static const int wallsBytesCapacity = WALLS_AMOUNT * sizeof(WallInstance);
