@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <thread>
 #include <directxmath.h>
 #include "Utils.h"
 #include "BulletManager.h"
@@ -48,6 +49,7 @@ private:
     void CreateDeviceAndSwapChain();
     void SetupSwapChain();
     void SetupRenderTargets();
+    void BulletsSpawnerJob();
 
 private:
     float mGlobalLifeCycleTimeMS = 0.0f;
@@ -97,4 +99,7 @@ private:
     std::vector<utils::Wall> mWalls{};
     std::vector<WallInstance> mWallInstance{};  // GPU data only
     BulletManager mBulletMngr;
+    std::thread mBulletsSpawnerThread{};
+    std::atomic_flag mBulletsSpawnerThreadInterapter{ATOMIC_FLAG_INIT};
+    std::atomic_flag mBulletsSpawningStops{ATOMIC_FLAG_INIT};
 };

@@ -9,19 +9,19 @@ static float EPSILON = std::numeric_limits<float>::epsilon();
 
 BulletManager::BulletManager(std::vector<utils::Wall>& walls) : mWalls(walls) {
     mBullets.reserve(1500000);  // we can have at most ~1 million bullets at once
+    mBulletsSwap.reserve(1500000);
 }
 
 // return false if there is no intersection, the time and point of intersection returned over param out_...
 bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, const utils::Wall& wall,
-                                          float& out_timeIntersection,
-                                          XMFLOAT3& out_intersectionPoint) {
-    // checking for intersection of ray with plane 
+                                          float& out_timeIntersection, XMFLOAT3& out_intersectionPoint) {
+    // checking for intersection of ray with plane
     // by placing line\ray equation R(t) = R0 + t * Rd into plane equation  Ax + By + Cz + D = 0
     // => A(X0 + Xd * t) + B(Y0 + Yd * t) + C(Z0 + Zd * t) + D = 0
-    XMVECTOR N = wall.normal;                // A B C from plane equation
-    XMVECTOR P = bullet.pos;                 // start pos of the ray
+    XMVECTOR N = wall.normal;                           // A B C from plane equation
+    XMVECTOR P = bullet.pos;                            // start pos of the ray
     XMVECTOR V = time_sec * bullet.speed * bullet.dir;  // velocity of the line equation or acceleration dir * time
-    float D = wall.distanceToOrigin;         // D from plane equation
+    float D = wall.distanceToOrigin;                    // D from plane equation
 
     float& t = out_timeIntersection;
 
@@ -32,7 +32,7 @@ bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, 
 
     // preventing from dividing by zero if the ray is parallel to the plane and there is no intersection:
     if (abs(denom) <= EPSILON) {
-        utils::log_debug("no intersection");
+        // utils::log_debug("no intersection");
         return false;
     }
 
@@ -41,7 +41,7 @@ bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, 
 
     // If t < 0 then the ray intersects plane behind origin, i.e. no intersection of interest
     if (t <= EPSILON) {
-        utils::log_debug("no intersection");
+        // utils::log_debug("no intersection");
         return false;
     }
 
@@ -57,56 +57,76 @@ bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, 
 }
 
 void BulletManager::Update(float time_sec) {
-    if (time_sec < 3) {
-        return;
-    }
+    std::lock_guard<std::mutex> lock(mSyncMngr);
+    float timeOfCollisionWithWallS = 0.0f;
+    XMFLOAT3 intersectionPoint;
+    mBulletsSwap.clear();
     for (auto& bullet : mBullets) {
+        bool checkingWallsNeeded = true;
         // if we already know about the posible collision then we don't need to make any calculations twice
         if (bullet.isPrecalculationCollision) {
-            float timeIntersection = 0.0f;
-            XMFLOAT3 intersectionPoint;
-            if (bullet.idOfTheWall > 0 &&
-                getTimeOfIntersection(time_sec, bullet, mWalls[bullet.idOfTheWall], timeIntersection, intersectionPoint) &&
-                timeIntersection <= 1.0f) {
+            // if the wall being checked is already destroyed then look for new wall from the beginning
+            if (bullet.idOfTheWall >= 0 && mWalls[bullet.idOfTheWall].isDestroyed) {
+                bullet.isPrecalculationCollision = false;
+                bullet.idOfTheWall = -1;
+            } else if (bullet.idOfTheWall >= 0 && (time_sec - bullet.time_creation) >= bullet.timeOfCollisionWithWallS) {
                 mWalls[bullet.idOfTheWall].isDestroyed = true;
-                utils::log_debug("WALL destroyed");
+                // utils::log_debug("WALL destroyed");
                 // TODO reflection;
-            }
-            continue;
-        }
-        for (size_t j = 0u; j < mWalls.size(); ++j) {
-            auto& wall = mWalls[j];
-            if (wall.isDestroyed) {
-                // the wall will be eliminated at next pass
                 continue;
-            }
-            // since our walls are ordered by Z value in ascending way then we can skip walls which are too far from final position of the bullet
-            if ((bullet.distanceToOrigin + EPSILON) < wall.distanceToOrigin) {
-                break;
-            }
-            float timeIntersection = 0.0f;
-            XMFLOAT3 intersectionPoint;
-            if (getTimeOfIntersection(time_sec, bullet, wall, timeIntersection, intersectionPoint)) {
-                utils::log_debug("intersection happens at point", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z,
-                                    " time ",
-                                 timeIntersection);
-                if (timeIntersection <= 1.0f) {
-                    wall.isDestroyed = true;
-                    utils::log_debug("WALL destroyed");
-                    // TODO reflection;
-                }
-                // now we know which wall the bullet is going to intersect
-                bullet.isPrecalculationCollision = true;
-                bullet.idOfTheWall = j;
-                break;
+            } else {
+                // no any collisions with this bullet
+                // no need to make any calculations twice let's skip all walls for this bullet
+                checkingWallsNeeded = false;
             }
         }
-        // we know that the bullet doesn't intersects any wall
-        bullet.isPrecalculationCollision = true;
+        if (checkingWallsNeeded) {
+            for (size_t j = 0u; j < mWalls.size(); ++j) {
+                auto& wall = mWalls[j];
+                if (wall.isDestroyed) {
+                    // the wall will be eliminated at next pass
+                    continue;
+                }
+                // since our walls are ordered by Z value in ascending way then we can skip walls which are too far from final
+                // position of the bullet
+                if ((bullet.distanceToOrigin + EPSILON) < wall.distanceToOrigin) {
+                    break;
+                }
+                if (getTimeOfIntersection(time_sec - bullet.time_creation, bullet, wall, timeOfCollisionWithWallS,
+                                          intersectionPoint)) {
+                    /*utils::log_debug("intersection happens at point", intersectionPoint.x, intersectionPoint.y,
+                                        intersectionPoint.z, " time ", timeIntersection);*/
+                    // now we know which wall the bullet is going to intersect
+                    bullet.isPrecalculationCollision = true;
+                    bullet.idOfTheWall = j;
+                    bullet.timeOfCollisionWithWallS = timeOfCollisionWithWallS;
+                    break;
+                }
+            }
+            // we know that the bullet doesn't intersects any wall (bullet.idOfTheWall == -1)
+            bullet.isPrecalculationCollision = true;
+        }
+
+        // checking whether the bullet is dead
+        if (bullet.time_creation + bullet.life_time < time_sec) {
+            // ensuring that the wall is destroyed for sure since the bullet is dead
+            if (bullet.isPrecalculationCollision && bullet.idOfTheWall >= 0) {
+                mWalls[bullet.idOfTheWall].isDestroyed = true;
+            }
+        } else {
+            mBulletsSwap.push_back(bullet);  // stores in swap buffer
+        }
+    }
+
+    mBullets.clear();
+    if (!mBulletsSwap.empty()) {
+        mBullets = mBulletsSwap;
     }
 }
 
 void BulletManager::Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time) {
-    float distanceToOrigin = XMVectorGetX(XMVector3Length(XMVectorAdd(pos, life_time * speed * dir))); // length of the final position of the bullet
+    std::lock_guard<std::mutex> lock(mSyncMngr);
+    float distanceToOrigin =
+        XMVectorGetX(XMVector3Length(XMVectorAdd(pos, life_time * speed * dir)));  // length of the final position of the bullet
     mBullets.emplace_back(pos, dir, speed, time, life_time, distanceToOrigin);
 }

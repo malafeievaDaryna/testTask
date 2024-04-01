@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <directxmath.h>
+#include <mutex>
 #include "Utils.h"
 
 #define NOMINMAX
@@ -17,6 +18,7 @@ class BulletManager {
         // at the first Update processing we can get to know whether the bullet intersects the walls at all and which wall it is going to intersect if yes
         bool isPrecalculationCollision{false};
         int32_t idOfTheWall{-1};  // precalculated id of the wall which is going be hit
+        int32_t timeOfCollisionWithWallS{-1}; 
         Bullet(const DirectX::XMVECTOR& _pos, const DirectX::XMVECTOR& _dir, float _speed, float _time_creation, float _life_time,
                float _distanceToOrigin)
             : pos(_pos),
@@ -34,6 +36,9 @@ public:
 
     void Update(float time_sec);
     void Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time);
+    const std::vector<Bullet>& getBullets() {
+        return mBullets;
+    }
 
 private:
     bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, const utils::Wall& wall,
@@ -43,4 +48,6 @@ private:
 private:
     std::vector<utils::Wall>& mWalls;
     std::vector<Bullet> mBullets;
+    std::vector<Bullet> mBulletsSwap; // intermediate storage
+    std::mutex mSyncMngr;
 };

@@ -124,10 +124,16 @@ void DirectXRenderer::Render() {
     ImGui::NewFrame();
     ImGui::SetNextWindowBgAlpha(0.5f);
     ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+    ImGui::SetWindowPos(ImVec2(0, 0));
     ImGui::SetWindowSize(ImVec2(0, 0));
     ImGui::SetWindowFontScale(1.3);
     ImGui::Text("FPS %d", FPS);
     ImGui::Text("MIN FPS %d", MIN_FPS);
+    ImGui::Text("WALLS AMOUNT %d", WALLS_AMOUNT);
+    ImGui::Text("BULLETS AMOUNT %d", mBulletMngr.getBullets().size());
+    if (ImGui::Button("spawn 1000000 bullets", ImVec2(200, 50))) {
+        mBulletsSpawningStops.clear(std::memory_order_relaxed);
+    }
     ImGui::End();
     ImGui::Render();
 
@@ -332,6 +338,47 @@ void DirectXRenderer::SetupSwapChain() {
     SetupRenderTargets();
 }
 
+void DirectXRenderer::BulletsSpawnerJob() {
+    using namespace std::chrono_literals;
+    //-----------------------------------------------------//
+    // THE BULLET GENERATOR
+    std::random_device rd;
+    std::mt19937 gen(rd());  // seed the generator
+    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+    std::default_random_engine generator;
+    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-20.0f));
+    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(20.0f));
+    static const XMVECTOR bulletStartPos = XMVectorSet(0.0f, 0.0f, -500.0f, 1.0f);
+    static const XMVECTOR defaultBulletDir = XMVectorSet(0.0f, 0.0f, 1.0f, 1.0f);  // the default direction is along the Z axis
+
+    mBulletsSpawningStops.test_and_set(std::memory_order_relaxed); // initiate with true value to suppress creation of bullets
+    while (mBulletsSpawnerThreadInterapter.test_and_set(std::memory_order_relaxed)) {
+        if (mBulletsSpawningStops.test_and_set(std::memory_order_relaxed)) {
+            // bullets generator inactive
+            continue;
+        }
+        for (std::size_t i = 0u; i < 1000000; ++i) {
+            float factorInterpolation = randomFloats(generator);  // some percentage between quaternions
+            auto interpolatedQuatRotation =
+                XMQuaternionSlerp(minRotation, maxRotation,
+                                  factorInterpolation);  // getting random interpolated rotation between two min\max quaternions
+            // multiplying default dir by interpolated rotation quat provides us random rotation
+            XMVECTOR bulletDir = XMQuaternionMultiply(XMQuaternionMultiply(interpolatedQuatRotation, defaultBulletDir),
+                                                      XMQuaternionConjugate(interpolatedQuatRotation));
+#if defined(_DEBUG)
+            XMFLOAT3 _bulletDir;
+            XMStoreFloat3(&_bulletDir, bulletDir);
+            // log_debug("random bullet dir:", _bulletDir.x, _bulletDir.y, _bulletDir.z);
+#endif
+            float speed = 1000.0f + randomFloats(generator) * 1000.0f;  // m/s
+            float timeOfCreationS = mGlobalLifeCycleTimeMS / 1000.0f;
+            float lifeTime = randomFloats(generator) * 5.0f;
+            mBulletMngr.Fire(bulletStartPos, bulletDir, speed, timeOfCreationS, lifeTime);
+            std::this_thread::sleep_for(1ms);
+        }    
+    }
+}
+
 void DirectXRenderer::Initialize(const std::string& title, int width, int height) {
     // Check for DirectX Math library support.
     if (!XMVerifyCPUSupport()) {
@@ -354,6 +401,7 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     ImGuiIO& io = ImGui::GetIO();
     (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+    io.WantCaptureMouse = true;
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(mWindow->hwnd());
     {
@@ -393,35 +441,6 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     CreateMeshBuffers(uploadCommandList.Get());
     CreateConstantBuffer();
     mWallTextureRes = CreateTexture(mDevice.Get(), uploadCommandList.Get(), "wall.jpg");
-
-    //-----------------------------------------------------//
-    // THE BULLET GENERATOR
-    std::random_device rd;
-    std::mt19937 gen(rd());  // seed the generator
-    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
-    std::default_random_engine generator;
-    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-20.0f));
-    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(20.0f));
-    static const XMVECTOR bulletStartPos = XMVectorSet(0.0f, 0.0f, -500.0f, 1.0f);
-    static const XMVECTOR defaultBulletDir = XMVectorSet(0.0f, 0.0f, 1.0f, 1.0f);  // the default direction is along the Z axis
-    for (std::size_t i = 0u; i < 10000; ++i) {
-        float factorInterpolation = randomFloats(generator);  // some percentage between quaternions
-        auto interpolatedQuatRotation =
-            XMQuaternionSlerp(minRotation, maxRotation,
-                              factorInterpolation);  // getting random interpolated rotation between two min\max quaternions
-        // multiplying default dir by interpolated rotation quat provides us random rotation
-        XMVECTOR bulletDir = XMQuaternionMultiply(XMQuaternionMultiply(interpolatedQuatRotation, defaultBulletDir),
-                                                  XMQuaternionConjugate(interpolatedQuatRotation));
-#if defined(_DEBUG)
-        XMFLOAT3 _bulletDir;
-        XMStoreFloat3(&_bulletDir, bulletDir);
-        log_debug("random bullet dir:", _bulletDir.x, _bulletDir.y, _bulletDir.z);
-#endif
-        float speed = randomFloats(generator) * 300.0f;  // m/s
-        float timeOfCreationS = mGlobalLifeCycleTimeMS / 1000.0f;
-        float lifeTime = randomFloats(generator) * 100.0f;
-        mBulletMngr.Fire(bulletStartPos, bulletDir, speed, timeOfCreationS, lifeTime);
-    }
 
     uploadCommandList->Close();
 
@@ -576,6 +595,10 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
                                              D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)};
 
     uploadCommandList->ResourceBarrier(3, barriers);
+
+    // now when walls are ready
+    mBulletsSpawnerThreadInterapter.test_and_set(std::memory_order_relaxed);
+    mBulletsSpawnerThread = std::thread(&DirectXRenderer::BulletsSpawnerJob, this);
 }
 
 void DirectXRenderer::CreatePipelineStateObject() {
@@ -703,6 +726,11 @@ void DirectXRenderer::UpdateConstantBuffer() {
 }
 
 void DirectXRenderer::Shutdown() {
+    // graceful interruption of the thread
+    mBulletsSpawnerThreadInterapter.clear(std::memory_order_relaxed);
+    if (mBulletsSpawnerThread.joinable()) {
+        mBulletsSpawnerThread.join();
+    }
     // Drain the queue, wait for everything to finish
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         WaitForFence(mFrameFences[i].Get(), mFenceValues[i], mFrameFenceEvents[i]);
