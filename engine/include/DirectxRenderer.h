@@ -71,6 +71,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mDSDescriptorHeap; // the heap for Depth Stencil buffer descriptor
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mRenderTargetDescriptorHeap{};
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> mImGuiSrvDescHeap{};
     UINT64 mRenderTargetViewDescriptorSize{0u};
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature{};

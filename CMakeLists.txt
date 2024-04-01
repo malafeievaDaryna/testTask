@@ -21,10 +21,22 @@ else()
    message("${CMAKE_CXX_FLAGS_DEBUG}")
 endif()
 
+file(GLOB_RECURSE IMGUI_HEADER "${CMAKE_SOURCE_DIR}/engine/imgui/*.h")
+set(IMGUI_SRC
+"${CMAKE_CURRENT_SOURCE_DIR}/engine/imgui/imgui.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/engine/imgui/imgui_tables.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/engine/imgui/imgui_draw.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/engine/imgui/imgui_widgets.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/engine/imgui/backends/imgui_impl_dx12.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/engine/imgui/backends/imgui_impl_win32.cpp"
+)
+add_library(imgui STATIC ${IMGUI_SRC})
+target_include_directories(imgui PRIVATE "${CMAKE_SOURCE_DIR}/engine/imgui")
+
 file(GLOB_RECURSE HEADERS "${CMAKE_SOURCE_DIR}/engine/include/*.h")
 file(GLOB_RECURSE SOURCES "${CMAKE_SOURCE_DIR}/engine/src/*.cpp")
 file(GLOB_RECURSE include_list LIST_DIRECTORIES true "${CMAKE_SOURCE_DIR}/engine/include")
-include_directories(${include_list})
 
 add_executable(${APP_NAME} ${HEADERS} ${SOURCES})
-target_link_libraries(${APP_NAME} "d3d12.lib" "d3dcompiler.lib" "dxgi.lib" "dxguid.lib")
+target_include_directories(${APP_NAME} PRIVATE ${include_list} ${IMGUI_HEADER})
+target_link_libraries(${APP_NAME} "d3d12.lib" "d3dcompiler.lib" "dxgi.lib" "dxguid.lib" imgui)

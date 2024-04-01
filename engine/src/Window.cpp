@@ -22,7 +22,7 @@ Window::Window(const std::string& title, const int width, const int height)
     : mWidth(width), mHeight(height), mWindowClassName(title) {
     m_hinstance = GetModuleHandle(NULL);
     assert(m_hinstance);
-    DWORD style = WS_OVERLAPPEDWINDOW | WS_CAPTION | WS_SIZEBOX;
+    DWORD style = WS_OVERLAPPEDWINDOW | WS_CAPTION | WS_SIZEBOX | WS_MAXIMIZE;
 
     RECT rect;
     rect.left = 50;
@@ -49,7 +49,7 @@ Window::Window(const std::string& title, const int width, const int height)
     mHwnd = CreateWindowEx(0, mWindowClassName.c_str(), mWindowClassName.c_str(), style, rect.left, rect.top,
                            rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, m_hinstance, NULL);
 
-    ShowWindow(mHwnd, SW_SHOW);
+    ShowWindow(mHwnd, SW_SHOWMAXIMIZED);
 }
 
 Window::~Window() {

@@ -15,12 +15,16 @@
 #include <chrono>
 #include <random>
 
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx12.h>
+#include <imgui.h>
+
 using namespace Microsoft::WRL;
 using namespace DirectX;
 using namespace utils;
 
 namespace {
-static const XMVECTOR EYE = XMVectorSet(0, 0, -700, 1);
+static const XMVECTOR EYE = XMVectorSet(0, 200, -700, 1);
 static const XMVECTOR TARGET = XMVectorSet(0, 0, 0, 1);
 static const XMVECTOR UP = XMVectorSet(0, 1, 0, 0);
 struct RenderEnvironment {
@@ -35,8 +39,7 @@ void WaitForFence(ID3D12Fence* fence, UINT64 completionValue, HANDLE waitEvent) 
     }
 }
 
-RenderEnvironment CreateDeviceAndSwapChainHelper(_In_opt_ IDXGIAdapter* adapter, D3D_FEATURE_LEVEL minimumFeatureLevel,
-                                                 _In_ const DXGI_SWAP_CHAIN_DESC* swapChainDesc) {
+RenderEnvironment CreateDeviceAndSwapChainHelper(D3D_FEATURE_LEVEL minimumFeatureLevel, const DXGI_SWAP_CHAIN_DESC* swapChainDesc) {
     RenderEnvironment result;
 
     ComPtr<IDXGIFactory4> dxgiFactory;
@@ -47,7 +50,8 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(_In_opt_ IDXGIAdapter* adapter,
     }
 
     SIZE_T maxDedicatedVideoMemory = 0;
-    for (UINT i = 0; dxgiFactory->EnumAdapters1(i, &dxgiAdapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+    UINT gpuAdapterId = 0u;
+    for (UINT i = 0u; dxgiFactory->EnumAdapters1(i, &dxgiAdapter) != DXGI_ERROR_NOT_FOUND; ++i) {
         DXGI_ADAPTER_DESC1 dxgiAdapterDesc;
         dxgiAdapter->GetDesc1(&dxgiAdapterDesc);
 
@@ -55,11 +59,21 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(_In_opt_ IDXGIAdapter* adapter,
         if ((dxgiAdapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
             SUCCEEDED(D3D12CreateDevice(dxgiAdapter.Get(), minimumFeatureLevel, __uuidof(ID3D12Device), nullptr)) &&
             dxgiAdapterDesc.DedicatedVideoMemory > maxDedicatedVideoMemory) {
+            gpuAdapterId = i;
             maxDedicatedVideoMemory = dxgiAdapterDesc.DedicatedVideoMemory;
         }
     }
-
-    hr = D3D12CreateDevice(adapter, minimumFeatureLevel, IID_PPV_ARGS(&result.device));
+#if defined(_DEBUG)
+    // enforce using integrated gpu if it exists for testing on poor hardware
+    if (dxgiFactory->EnumAdapters1(1u, &dxgiAdapter) != DXGI_ERROR_NOT_FOUND) {
+        gpuAdapterId = 1u;
+    }
+#endif
+     
+    dxgiFactory->EnumAdapters1(gpuAdapterId, &dxgiAdapter);
+    ComPtr<IDXGIAdapter> adapter;
+    dxgiAdapter.As(&adapter);
+    hr = D3D12CreateDevice(adapter.Get(), minimumFeatureLevel, IID_PPV_ARGS(&result.device));
 
     if (FAILED(hr)) {
         throw std::runtime_error("Device creation failed.");
@@ -100,6 +114,23 @@ void DirectXRenderer::Render() {
     static auto endTime = std::chrono::high_resolution_clock::now();
     static float deltaTimeMS = 0.0f;
     static float globalLifeCycleTimeMS = 0.0f;
+
+    //FPS UI
+    static uint32_t framesCounter = 0u;
+    static float secondElapsed = 0.0f; // when second elapsed then we measure fps
+    static uint32_t FPS = 0u;
+    static uint32_t MIN_FPS = std::numeric_limits<uint32_t>::max();
+    ImGui_ImplDX12_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    ImGui::Begin("Menu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+    ImGui::SetWindowSize(ImVec2(0, 0));
+    ImGui::SetWindowFontScale(1.3);
+    ImGui::Text("FPS %d", FPS);
+    ImGui::Text("MIN FPS %d", MIN_FPS);
+    ImGui::End();
+    ImGui::Render();
 
     // waiting for completion of frame processing on gpu
     WaitForFence(mFrameFences[m_currentFrame].Get(), mFenceValues[m_currentFrame], mFrameFenceEvents[m_currentFrame]);
@@ -156,6 +187,10 @@ void DirectXRenderer::Render() {
     commandList->IASetIndexBuffer(&mIndexBufferView);
     commandList->DrawIndexedInstanced(6, mWalls.size(), 0, 0, 0); // drawing 100000 instances of the wall
 
+    ID3D12DescriptorHeap* imgui_heaps[] = {mImGuiSrvDescHeap.Get()};
+    commandList->SetDescriptorHeaps(1, imgui_heaps);
+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
+
     D3D12_RESOURCE_BARRIER barrierAfter;
     barrierAfter.Transition.pResource = mRenderTargets[m_currentFrame].Get();
     barrierAfter.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -186,6 +221,16 @@ void DirectXRenderer::Render() {
     deltaTimeMS = std::chrono::duration<float, std::chrono::milliseconds::period>(endTime - startTime).count();
     globalLifeCycleTimeMS += deltaTimeMS;
     startTime = endTime;
+
+    // FPS measuring
+    secondElapsed += deltaTimeMS;
+    framesCounter++;
+    if (secondElapsed >= 1000.0) { // how many frames were drawn per second
+        FPS = framesCounter;
+        MIN_FPS = MIN_FPS > FPS ? FPS : MIN_FPS;
+        framesCounter = 0u;
+        secondElapsed = 0.0;
+    }
 }
 
 bool DirectXRenderer::Run() {
@@ -305,6 +350,26 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     mBulletMngr.Fire(XMFLOAT3{0.0f, 100.0f, -500.0f}, XMFLOAT3{0.0f, 0.0f, 1.0f}, 100.0f, 0.0f, 100.0f);
 
     CreateDeviceAndSwapChain();
+
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+    ImGui::StyleColorsDark();
+    ImGui_ImplWin32_Init(mWindow->hwnd());
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+        desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        desc.NumDescriptors = 1;
+        desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        if (mDevice->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&mImGuiSrvDescHeap)) != S_OK)
+            log_err("CreateDescriptorHeap failed for imgui");
+    }
+    ImGui_ImplDX12_Init(mDevice.Get(), MAX_FRAMES_IN_FLIGHT, DXGI_FORMAT_R8G8B8A8_UNORM, mImGuiSrvDescHeap.Get(),
+                        mImGuiSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
+                        mImGuiSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
 
     mRectScissor = {0, 0, (long)mWindow->width(), (long)mWindow->height()};
     mViewport = {0.0f, 0.0f, static_cast<float>(mWindow->width()), static_cast<float>(mWindow->height()), 0.0f, 1.0f};
@@ -654,7 +719,7 @@ void DirectXRenderer::CreateDeviceAndSwapChain() {
 
     // the driver may support directx 12 api but without hardware acceleration
     // D3D_FEATURE_LEVEL_11_0 hardware acceleration is present for sure
-    auto renderEnv = CreateDeviceAndSwapChainHelper(nullptr, D3D_FEATURE_LEVEL_11_0, &swapChainDesc);
+    auto renderEnv = CreateDeviceAndSwapChainHelper(D3D_FEATURE_LEVEL_11_0, &swapChainDesc);
 
     mDevice = renderEnv.device;
     mCommandQueue = renderEnv.queue;
