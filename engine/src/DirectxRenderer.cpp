@@ -113,8 +113,6 @@ DirectXRenderer::~DirectXRenderer() {
 void DirectXRenderer::Render() {
     static auto startTime = std::chrono::high_resolution_clock::now();
     static auto endTime = std::chrono::high_resolution_clock::now();
-    static float deltaTimeMS = 0.0f;
-    static float globalLifeCycleTimeMS = 0.0f;
 
     //FPS UI
     static uint32_t framesCounter = 0u;
@@ -162,7 +160,7 @@ void DirectXRenderer::Render() {
 
     commandList->ResourceBarrier(1, &barrierBefore);
 
-    mBulletMngr.Update(globalLifeCycleTimeMS / 1000.0f);
+    mBulletMngr.Update(mGlobalLifeCycleTimeMS / 1000.0f);
     UpdateConstantBuffer();
 
     static const float clearColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -219,12 +217,12 @@ void DirectXRenderer::Render() {
     assert(m_currentFrame < MAX_FRAMES_IN_FLIGHT);
 
     endTime = std::chrono::high_resolution_clock::now();
-    deltaTimeMS = std::chrono::duration<float, std::chrono::milliseconds::period>(endTime - startTime).count();
-    globalLifeCycleTimeMS += deltaTimeMS;
+    mDeltaTimeMS = std::chrono::duration<float, std::chrono::milliseconds::period>(endTime - startTime).count();
+    mGlobalLifeCycleTimeMS += mDeltaTimeMS;
     startTime = endTime;
 
     // FPS measuring
-    secondElapsed += deltaTimeMS;
+    secondElapsed += mDeltaTimeMS;
     framesCounter++;
     if (secondElapsed >= 1000.0) { // how many frames were drawn per second
         FPS = framesCounter;
@@ -348,8 +346,6 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     float aspectRatio = static_cast<float>(mWindow->width()) / mWindow->height();
     mProj = XMMatrixPerspectiveFovLH(XMConvertToRadians(45.0f), aspectRatio, 0.01f, zFar);
 
-    mBulletMngr.Fire(XMFLOAT3{0.0f, 100.0f, -500.0f}, XMFLOAT3{0.0f, 0.0f, 1.0f}, 100.0f, 0.0f, 100.0f);
-
     CreateDeviceAndSwapChain();
 
     // Setup Dear ImGui context
@@ -396,8 +392,36 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     CreatePipelineStateObject();
     CreateMeshBuffers(uploadCommandList.Get());
     CreateConstantBuffer();
-
     mWallTextureRes = CreateTexture(mDevice.Get(), uploadCommandList.Get(), "wall.jpg");
+
+    //-----------------------------------------------------//
+    // THE BULLET GENERATOR
+    std::random_device rd;
+    std::mt19937 gen(rd());  // seed the generator
+    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+    std::default_random_engine generator;
+    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-20.0f));
+    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(20.0f));
+    static const XMVECTOR bulletStartPos = XMVectorSet(0.0f, 0.0f, -500.0f, 1.0f);
+    static const XMVECTOR defaultBulletDir = XMVectorSet(0.0f, 0.0f, 1.0f, 1.0f);  // the default direction is along the Z axis
+    for (std::size_t i = 0u; i < 10000; ++i) {
+        float factorInterpolation = randomFloats(generator);  // some percentage between quaternions
+        auto interpolatedQuatRotation =
+            XMQuaternionSlerp(minRotation, maxRotation,
+                              factorInterpolation);  // getting random interpolated rotation between two min\max quaternions
+        // multiplying default dir by interpolated rotation quat provides us random rotation
+        XMVECTOR bulletDir = XMQuaternionMultiply(XMQuaternionMultiply(interpolatedQuatRotation, defaultBulletDir),
+                                                  XMQuaternionConjugate(interpolatedQuatRotation));
+#if defined(_DEBUG)
+        XMFLOAT3 _bulletDir;
+        XMStoreFloat3(&_bulletDir, bulletDir);
+        log_debug("random bullet dir:", _bulletDir.x, _bulletDir.y, _bulletDir.z);
+#endif
+        float speed = randomFloats(generator) * 300.0f;  // m/s
+        float timeOfCreationS = mGlobalLifeCycleTimeMS / 1000.0f;
+        float lifeTime = randomFloats(generator) * 100.0f;
+        mBulletMngr.Fire(bulletStartPos, bulletDir, speed, timeOfCreationS, lifeTime);
+    }
 
     uploadCommandList->Close();
 
@@ -468,6 +492,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
         wall.bottomY = bottom.y;
         wall.leftX = left.x;
         wall.rightX = right.x;
+        wall.centerZ = centerZ;
         sortedWallsByZ.emplace(centerZ, wall);
     }
 

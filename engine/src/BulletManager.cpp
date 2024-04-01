@@ -57,19 +57,56 @@ bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, 
 }
 
 void BulletManager::Update(float time_sec) {
-    utils::log_debug("cur time s", time_sec);
-    auto& wall = mWalls[0];
-    auto& bullet = mBullets[0];
-    float timeIntersection = 0.0f;
-    XMFLOAT3 intersectionPoint;
-    if (getTimeOfIntersection(time_sec, bullet, wall, timeIntersection, intersectionPoint)) {
-        /*utils::log_debug("intersection happens at point", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z,
-                            " time ",
-                         timeIntersection);*/
-        wall.isDestroyed = timeIntersection <= 1.0f;
+    if (time_sec < 3) {
+        return;
+    }
+    for (auto& bullet : mBullets) {
+        // if we already know about the posible collision then we don't need to make any calculations twice
+        if (bullet.isPrecalculationCollision) {
+            float timeIntersection = 0.0f;
+            XMFLOAT3 intersectionPoint;
+            if (bullet.idOfTheWall > 0 &&
+                getTimeOfIntersection(time_sec, bullet, mWalls[bullet.idOfTheWall], timeIntersection, intersectionPoint) &&
+                timeIntersection <= 1.0f) {
+                mWalls[bullet.idOfTheWall].isDestroyed = true;
+                utils::log_debug("WALL destroyed");
+                // TODO reflection;
+            }
+            continue;
+        }
+        for (size_t j = 0u; j < mWalls.size(); ++j) {
+            auto& wall = mWalls[j];
+            if (wall.isDestroyed) {
+                // the wall will be eliminated at next pass
+                continue;
+            }
+            // since our walls are ordered by Z value in ascending way then we can skip walls which are too far from final position of the bullet
+            if ((bullet.distanceToOrigin + EPSILON) < wall.distanceToOrigin) {
+                break;
+            }
+            float timeIntersection = 0.0f;
+            XMFLOAT3 intersectionPoint;
+            if (getTimeOfIntersection(time_sec, bullet, wall, timeIntersection, intersectionPoint)) {
+                utils::log_debug("intersection happens at point", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z,
+                                    " time ",
+                                 timeIntersection);
+                if (timeIntersection <= 1.0f) {
+                    wall.isDestroyed = true;
+                    utils::log_debug("WALL destroyed");
+                    // TODO reflection;
+                }
+                // now we know which wall the bullet is going to intersect
+                bullet.isPrecalculationCollision = true;
+                bullet.idOfTheWall = j;
+                break;
+            }
+        }
+        // we know that the bullet doesn't intersects any wall
+        bullet.isPrecalculationCollision = true;
     }
 }
 
-void BulletManager::Fire(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& dir, float speed, float time, float life_time) {
-    mBullets.emplace_back(XMLoadFloat3(&pos), XMLoadFloat3(&dir), speed, time, life_time);
+void BulletManager::Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time) {
+    float distanceToOrigin = XMVectorGetX(XMVector3Length(XMVectorAdd(pos, life_time * speed * dir))); // length of the final position of the bullet
+    mBullets.emplace_back(pos, dir, speed, time, life_time, distanceToOrigin);
 }

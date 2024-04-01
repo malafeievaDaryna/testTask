@@ -4,6 +4,8 @@
 #include <directxmath.h>
 #include "Utils.h"
 
+#define NOMINMAX
+
 class BulletManager {
     struct Bullet {
         DirectX::XMVECTOR pos;
@@ -11,8 +13,18 @@ class BulletManager {
         float speed;
         float time_creation;
         float life_time;
-        Bullet(const DirectX::XMVECTOR& _pos, const DirectX::XMVECTOR& _dir, float _speed, float _time_creation, float _life_time)
-            : pos(_pos), dir(_dir), speed(_speed), time_creation(_time_creation), life_time(_life_time) {
+        float distanceToOrigin; // the destination of the bullet: length(life_time * speed * dir)
+        // at the first Update processing we can get to know whether the bullet intersects the walls at all and which wall it is going to intersect if yes
+        bool isPrecalculationCollision{false};
+        int32_t idOfTheWall{-1};  // precalculated id of the wall which is going be hit
+        Bullet(const DirectX::XMVECTOR& _pos, const DirectX::XMVECTOR& _dir, float _speed, float _time_creation, float _life_time,
+               float _distanceToOrigin)
+            : pos(_pos),
+              dir(_dir),
+              speed(_speed),
+              time_creation(_time_creation),
+              life_time(_life_time),
+              distanceToOrigin(_distanceToOrigin) {
         }
     };
 
@@ -21,7 +33,7 @@ public:
     ~BulletManager() = default;
 
     void Update(float time_sec);
-    void Fire(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& dir, float speed, float time, float life_time);
+    void Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time);
 
 private:
     bool BulletManager::getTimeOfIntersection(float time_sec, const Bullet& bullet, const utils::Wall& wall,

@@ -50,6 +50,8 @@ private:
     void SetupRenderTargets();
 
 private:
+    float mGlobalLifeCycleTimeMS = 0.0f;
+    float mDeltaTimeMS = 0.0f;
     std::unique_ptr<Window, void (*)(Window*)> mWindow;
     DirectX::XMMATRIX mModel{};
     DirectX::XMMATRIX mView{};
