@@ -8,6 +8,7 @@
 #define NOMINMAX
 
 class BulletManager {
+public:
     struct Bullet {
         DirectX::XMVECTOR pos;
         DirectX::XMVECTOR dir;
@@ -30,14 +31,16 @@ class BulletManager {
         }
     };
 
-public:
     BulletManager(std::vector<utils::Wall>& walls);
     ~BulletManager() = default;
 
     void Update(float time_sec);
     void Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time);
     uint32_t getBulletsAmount() {
-        return mBulletsAmount.load(std::memory_order_relaxed);
+        return mBullets.size();
+    }
+    const std::vector<DirectX::XMVECTOR>& getBulletsGPUData() {
+        return mBulletInstances;
     }
 
 private:
@@ -49,6 +52,6 @@ private:
     std::vector<utils::Wall>& mWalls;
     std::vector<Bullet> mBullets;
     std::vector<Bullet> mBulletsSwap; // intermediate storage
-    std::atomic<uint32_t> mBulletsAmount;
     std::mutex mSyncMngr;
+    std::vector<DirectX::XMVECTOR> mBulletInstances;  // gpu data
 };

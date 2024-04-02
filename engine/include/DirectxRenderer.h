@@ -42,6 +42,7 @@ private:
     void Shutdown();
     void Render();
     void UpdateConstantBuffer();
+    void UpdateBulletsBuffer();
     bool CheckTearingSupport();
     void CreateConstantBuffer();
     void CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommandList);
@@ -80,26 +81,31 @@ private:
     UINT64 mRenderTargetViewDescriptorSize{0u};
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> mRootSignature{};
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> mPso{};
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> mPsoWall{};
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> mPsoBullet{};
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> mUploadBuffer{};
-    Microsoft::WRL::ComPtr<ID3D12Resource> mVertexBuffer{};
-    D3D12_VERTEX_BUFFER_VIEW mVertexBufferView;
+    Microsoft::WRL::ComPtr<ID3D12Resource> mWallUploadBuffer{};
+    Microsoft::WRL::ComPtr<ID3D12Resource> mWallVertexBuffer{};
+    D3D12_VERTEX_BUFFER_VIEW mWallVertexBufferView;
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> mInstanceBuffer;
-    D3D12_VERTEX_BUFFER_VIEW mInstanceBufferView;
+    Microsoft::WRL::ComPtr<ID3D12Resource> mWallInstanceBuffer;
+    D3D12_VERTEX_BUFFER_VIEW mWallInstanceBufferView;
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> mIndexBuffer{};
-    D3D12_INDEX_BUFFER_VIEW mIndexBufferView{};
+    Microsoft::WRL::ComPtr<ID3D12Resource> mWallIndexBuffer{};
+    D3D12_INDEX_BUFFER_VIEW mWallIndexBufferView{};
     ConstantBuffer mConstantBufferData{};
     Microsoft::WRL::ComPtr<ID3D12Resource> mConstantBuffers[MAX_FRAMES_IN_FLIGHT];
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> mCommandAllocators[MAX_FRAMES_IN_FLIGHT]{};
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> mCommandLists[MAX_FRAMES_IN_FLIGHT]{};
 
+    Microsoft::WRL::ComPtr<ID3D12Resource> mBulletsBuffer{}; // BULLETS BUFFER BEING STORED ON GPU\CPU accessible memory since it's constantly changing
+    D3D12_VERTEX_BUFFER_VIEW mBulletsBufferView{};
+    utils::Texture2DResource mBulletTextureRes{};
+
     utils::Texture2DResource mWallTextureRes{};
     std::vector<utils::Wall> mWalls{};
     uint32_t mActualWallsAmount{0u}; // all walls including destroyed ones persist for a while but will be discarded and marked as unused
-    std::vector<WallInstance> mWallInstances{};  // GPU data only
+    std::vector<WallInstance> mWallInstances{};  // WALL DATA BEING STORED IN ABSOLUTE GPU MEMORY (destroying is visualized by triangle discarding to avoid permanent updating)
     BulletManager mBulletMngr;
     std::thread mBulletsSpawnerThread{};
     std::atomic_flag mBulletsSpawnerThreadInterupter{ATOMIC_FLAG_INIT};

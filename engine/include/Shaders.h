@@ -1,5 +1,5 @@
 namespace shaders {
-const char vs_shader[] =
+const char vs_wall_shader[] =
     "cbuffer PerFaceConstants : register (b0)\n"
     "{\n"
     "	matrix MVP;\n"
@@ -12,7 +12,7 @@ const char vs_shader[] =
     "};\n"
     "VertexShaderOutput VS_main(\n"
     "	uint extrudVertID : EXTRUDVERTID,\n"
-    "	float2 uv : TEXCOORD,\n" 
+    "	float2 uv : TEXCOORD,\n"
     "   matrix instanceExtrudingVer : INSTANCEEXTRUDINGVERTS,\n"
     "	uint id: SV_InstanceID)\n"
     "{\n"
@@ -26,6 +26,37 @@ const char vs_shader[] =
     "	/*primitive discarding by degradating triangle with putting outside NDC */\n"
     "	output.position = float4(100, 100, 100, 1);\n"
     "	}\n"
+    "	return output;\n"
+    "}\n";
+const char vs_bullet_shader[] =
+    "cbuffer PerFaceConstants : register (b0)\n"
+    "{\n"
+    "	matrix MVP;\n"
+    "}\n"
+    "struct VertexShaderOutput\n"
+    "{\n"
+    "	float4 position : SV_POSITION;\n"
+    "	float2 uv : TEXCOORD;\n"
+    "};\n"
+    "static const float bulletScale = 10;\n" 
+    "static const float2 verts[6] = {\n" 
+    "{1.0, -1.0}, \n"
+    "{-1.0, -1.0},\n" 
+    "{-1.0, 1.0}, \n"
+    "{-1.0, 1.0}, \n"
+    "{1.0, 1.0},  \n"
+    "{1.0, -1.0}}; \n"
+    "VertexShaderOutput VS_main(\n"
+    "   float4 instancePos : INSTANCEPOS,\n"
+    "	uint id: SV_VertexID)\n"
+    "{\n"
+    "	VertexShaderOutput output;\n"
+    "   float4 extruding = float4(verts[id], 0.0, 1.0);\n"
+    "	output.uv = clamp(extruding.xy, float2(0.0, 0.0), float2(1.0, 1.0));\n"
+    "   float4 pos = float4(instancePos.xyz, 1.0);\n"
+    "   output.position = mul(MVP, pos);\n"
+    "   extruding = float4(bulletScale*extruding.x, bulletScale*extruding.y, output.position.z, output.position.w);\n"
+    "   output.position = output.position + extruding;\n"
     "	return output;\n"
     "}\n";
 const char fs_shader[] =

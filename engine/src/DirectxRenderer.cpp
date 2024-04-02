@@ -168,6 +168,7 @@ void DirectXRenderer::Render() {
     commandList->ResourceBarrier(1, &barrierBefore);
 
     mBulletMngr.Update(mGlobalLifeCycleTimeMS / 1000.0f);
+    UpdateBulletsBuffer();
     UpdateConstantBuffer();
 
     static const float clearColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -175,8 +176,8 @@ void DirectXRenderer::Render() {
     commandList->ClearRenderTargetView(renderTargetHandle, clearColor, 0, nullptr);
     commandList->ClearDepthStencilView(mDSDescriptorHeap->GetCPUDescriptorHandleForHeapStart(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0,
                                        0, nullptr);
-
-    commandList->SetPipelineState(mPso.Get());
+    // WALLS
+    commandList->SetPipelineState(mPsoWall.Get());
     commandList->SetGraphicsRootSignature(mRootSignature.Get());
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // Set the descriptor heap containing the texture srv
@@ -188,11 +189,25 @@ void DirectXRenderer::Render() {
     // Set slot 1 of our root signature to the constant buffer view
     commandList->SetGraphicsRootConstantBufferView(1, mConstantBuffers[m_currentFrame]->GetGPUVirtualAddress());
 
-    commandList->IASetVertexBuffers(0, 1, &mVertexBufferView);
-    commandList->IASetVertexBuffers(1, 1, &mInstanceBufferView);
-    commandList->IASetIndexBuffer(&mIndexBufferView);
+    commandList->IASetVertexBuffers(0, 1, &mWallVertexBufferView);
+    commandList->IASetVertexBuffers(1, 1, &mWallInstanceBufferView);
+    commandList->IASetIndexBuffer(&mWallIndexBufferView);
     commandList->DrawIndexedInstanced(6, mWalls.size(), 0, 0, 0); // drawing 100000 instances of the wall
 
+    // BULLETS
+    commandList->SetPipelineState(mPsoBullet.Get());
+    // Set the descriptor heap containing the texture srv
+    ID3D12DescriptorHeap* bullet_heaps[] = {mBulletTextureRes.srvDescriptorHeap.Get()};
+    commandList->SetDescriptorHeaps(1, bullet_heaps);
+    // Set slot 0 of our root signature to point to our descriptor heap with
+    // the texture SRV
+    commandList->SetGraphicsRootDescriptorTable(0, mBulletTextureRes.srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+    // Set slot 1 of our root signature to the constant buffer view
+    commandList->SetGraphicsRootConstantBufferView(1, mConstantBuffers[m_currentFrame]->GetGPUVirtualAddress());
+    commandList->IASetVertexBuffers(0, 1, &mBulletsBufferView);
+    commandList->DrawInstanced(6, mBulletMngr.getBulletsAmount(), 0, 0);  // drawing instances of the bullet
+
+    // IMGUI UI
     ID3D12DescriptorHeap* imgui_heaps[] = {mImGuiSrvDescHeap.Get()};
     commandList->SetDescriptorHeaps(1, imgui_heaps);
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), commandList);
@@ -445,6 +460,7 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
     CreateMeshBuffers(uploadCommandList.Get());
     CreateConstantBuffer();
     mWallTextureRes = CreateTexture(mDevice.Get(), uploadCommandList.Get(), "wall.jpg");
+    mBulletTextureRes = CreateTexture(mDevice.Get(), uploadCommandList.Get(), "bullet.png");
 
     uploadCommandList->Close();
 
@@ -468,6 +484,7 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
 }
 
 void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommandList) {
+    // WALL DATA BEING STORED IN ABSOLUTE GPU MEMORY (destroying is visualized by triangle discarding to avoid permanent updating)
     struct Vertex {
         uint32_t extrudingVertexID;
         float uv[2];
@@ -541,7 +558,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     // Create upload buffer on CPU
     mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &uploadBufferDesc,
-                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mUploadBuffer));
+                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mWallUploadBuffer));
 
     // Create vertex & index buffer on the GPU
     // HEAP_TYPE_DEFAULT is on GPU, we also initialize with COPY_DEST state
@@ -550,55 +567,66 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     static const auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices));
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
-                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mVertexBuffer));
+                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mWallVertexBuffer));
 
     static const auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(indices));
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &indexBufferDesc,
-                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mIndexBuffer));
+                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mWallIndexBuffer));
 
     static const auto instanceBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(wallsBytesCapacity);
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &instanceBufferDesc,
-                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mInstanceBuffer));
+                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mWallInstanceBuffer));
 
     // Create buffer views
-    mVertexBufferView.BufferLocation = mVertexBuffer->GetGPUVirtualAddress();
-    mVertexBufferView.SizeInBytes = sizeof(vertices);
-    mVertexBufferView.StrideInBytes = sizeof(Vertex);
+    mWallVertexBufferView.BufferLocation = mWallVertexBuffer->GetGPUVirtualAddress();
+    mWallVertexBufferView.SizeInBytes = sizeof(vertices);
+    mWallVertexBufferView.StrideInBytes = sizeof(Vertex);
 
-    mIndexBufferView.BufferLocation = mIndexBuffer->GetGPUVirtualAddress();
-    mIndexBufferView.SizeInBytes = sizeof(indices);
-    mIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
+    mWallIndexBufferView.BufferLocation = mWallIndexBuffer->GetGPUVirtualAddress();
+    mWallIndexBufferView.SizeInBytes = sizeof(indices);
+    mWallIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
     // Create buffer views
-    mInstanceBufferView.BufferLocation = mInstanceBuffer->GetGPUVirtualAddress();
-    mInstanceBufferView.SizeInBytes = wallsBytesCapacity;
-    mInstanceBufferView.StrideInBytes = sizeof(WallInstance);
+    mWallInstanceBufferView.BufferLocation = mWallInstanceBuffer->GetGPUVirtualAddress();
+    mWallInstanceBufferView.SizeInBytes = wallsBytesCapacity;
+    mWallInstanceBufferView.StrideInBytes = sizeof(WallInstance);
 
     // Copy data on CPU into the upload buffer
     void* p;
-    mUploadBuffer->Map(0, nullptr, &p);
+    mWallUploadBuffer->Map(0, nullptr, &p);
     ::memcpy(p, vertices, sizeof(vertices));
     ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices), indices, sizeof(indices));
     ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &mWallInstances[0], wallsBytesCapacity);
-    mUploadBuffer->Unmap(0, nullptr);
+    mWallUploadBuffer->Unmap(0, nullptr);
 
     // Copy data from upload buffer on CPU into the index/vertex buffer on
     // the GPU
-    uploadCommandList->CopyBufferRegion(mVertexBuffer.Get(), 0, mUploadBuffer.Get(), 0, sizeof(vertices));
-    uploadCommandList->CopyBufferRegion(mIndexBuffer.Get(), 0, mUploadBuffer.Get(), sizeof(vertices), sizeof(indices));
-    uploadCommandList->CopyBufferRegion(mInstanceBuffer.Get(), 0, mUploadBuffer.Get(), sizeof(vertices) + sizeof(indices),
+    uploadCommandList->CopyBufferRegion(mWallVertexBuffer.Get(), 0, mWallUploadBuffer.Get(), 0, sizeof(vertices));
+    uploadCommandList->CopyBufferRegion(mWallIndexBuffer.Get(), 0, mWallUploadBuffer.Get(), sizeof(vertices), sizeof(indices));
+    uploadCommandList->CopyBufferRegion(mWallInstanceBuffer.Get(), 0, mWallUploadBuffer.Get(), sizeof(vertices) + sizeof(indices),
                                         wallsBytesCapacity);
 
     // Barriers, batch them together
     const CD3DX12_RESOURCE_BARRIER barriers[3] = {
-        CD3DX12_RESOURCE_BARRIER::Transition(mVertexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        CD3DX12_RESOURCE_BARRIER::Transition(mWallVertexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                                              D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER),
-        CD3DX12_RESOURCE_BARRIER::Transition(mIndexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        CD3DX12_RESOURCE_BARRIER::Transition(mWallIndexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                                              D3D12_RESOURCE_STATE_INDEX_BUFFER),
-        CD3DX12_RESOURCE_BARRIER::Transition(mInstanceBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        CD3DX12_RESOURCE_BARRIER::Transition(mWallInstanceBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
                                              D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)};
 
     uploadCommandList->ResourceBarrier(3, barriers);
+
+    // BULLETS BUFFER BEING STORED ON GPU\CPU accessible memory since it's constantly changing
+    static const int bulletsBytesCapacity = BULLETS_AMOUNT * sizeof(DirectX::XMVECTOR);
+    static const auto uploadBulletsBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(bulletsBytesCapacity);
+
+    mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &uploadBulletsBufferDesc,
+                                     D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_PPV_ARGS(&mBulletsBuffer));
+
+    mBulletsBufferView.BufferLocation = mBulletsBuffer->GetGPUVirtualAddress();
+    mBulletsBufferView.SizeInBytes = bulletsBytesCapacity;
+    mBulletsBufferView.StrideInBytes = sizeof(DirectX::XMVECTOR);
 
     // now when walls are ready
     mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed);
@@ -606,7 +634,8 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 }
 
 void DirectXRenderer::CreatePipelineStateObject() {
-    static const D3D12_INPUT_ELEMENT_DESC layout[] = {
+    // WALL
+    static const D3D12_INPUT_ELEMENT_DESC wallLayout[] = {
         {"EXTRUDVERTID", 0, DXGI_FORMAT_R32_UINT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 4, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"INSTANCEEXTRUDINGVERTS", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
@@ -623,7 +652,8 @@ void DirectXRenderer::CreatePipelineStateObject() {
 
     ComPtr<ID3DBlob> errors;
     ComPtr<ID3DBlob> vertexShader;
-    HRESULT hr = D3DCompile(shaders::vs_shader, sizeof(shaders::vs_shader), "", nullptr, nullptr, "VS_main", "vs_5_1", compileFlags, 0,
+    HRESULT hr = D3DCompile(shaders::vs_wall_shader, sizeof(shaders::vs_wall_shader), "", nullptr, nullptr, "VS_main", "vs_5_1",
+                            compileFlags, 0,
                &vertexShader, &errors);
     if (FAILED(hr) && errors) {
         log_err("error when compiling vs shaders", reinterpret_cast<const char*>(errors.Get()->GetBufferPointer()));
@@ -645,8 +675,8 @@ void DirectXRenderer::CreatePipelineStateObject() {
     psoDesc.NumRenderTargets = 1;
     psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     psoDesc.DSVFormat = DEPTH_FORMAT;
-    psoDesc.InputLayout.NumElements = std::extent<decltype(layout)>::value;
-    psoDesc.InputLayout.pInputElementDescs = layout;
+    psoDesc.InputLayout.NumElements = std::extent<decltype(wallLayout)>::value;
+    psoDesc.InputLayout.pInputElementDescs = wallLayout;
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     // psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // both faces drawn
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
@@ -667,7 +697,30 @@ void DirectXRenderer::CreatePipelineStateObject() {
     // let's create default depth testing: DepthEnable = TRUE; DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 
-    mDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mPso));
+    hr = mDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mPsoWall));
+    if (FAILED(hr)) {
+        log_err("error when creating pso for wall");
+    }
+
+    // PSO for BULLET
+    static const D3D12_INPUT_ELEMENT_DESC bulletLayout[] = {
+        {"INSTANCEPOS", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 0}};
+
+    ComPtr<ID3DBlob> vertexShaderBullet;
+    hr = D3DCompile(shaders::vs_bullet_shader, sizeof(shaders::vs_bullet_shader), "", nullptr, nullptr, "VS_main",
+                            "vs_5_1", compileFlags, 0, &vertexShaderBullet, &errors);
+    if (FAILED(hr) && errors) {
+        log_err("error when compiling vs shaders", reinterpret_cast<const char*>(errors.Get()->GetBufferPointer()));
+    }
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDescBullet = psoDesc;
+    psoDescBullet.InputLayout.NumElements = std::extent<decltype(bulletLayout)>::value;
+    psoDescBullet.InputLayout.pInputElementDescs = bulletLayout;
+    psoDescBullet.VS.BytecodeLength = vertexShaderBullet->GetBufferSize();
+    psoDescBullet.VS.pShaderBytecode = vertexShaderBullet->GetBufferPointer();
+    hr = mDevice->CreateGraphicsPipelineState(&psoDescBullet, IID_PPV_ARGS(&mPsoBullet));
+    if (FAILED(hr)) {
+        log_err("error when creating pso for bullet");
+    }
 }
 
 void DirectXRenderer::CreateRootSignature() {
@@ -736,6 +789,16 @@ void DirectXRenderer::UpdateConstantBuffer() {
         mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);
         memcpy(data, &mConstantBufferData, sizeof(mConstantBufferData));
         mConstantBuffers[m_currentFrame]->Unmap(0, nullptr);
+    }
+}
+
+void DirectXRenderer::UpdateBulletsBuffer() {
+    const std::vector<DirectX::XMVECTOR>& instaces = mBulletMngr.getBulletsGPUData();
+    if (!instaces.empty()) {
+        void* data;
+        mBulletsBuffer->Map(0, nullptr, &data);
+        memcpy(data, instaces.data(), sizeof(DirectX::XMVECTOR) * instaces.size());
+        mBulletsBuffer->Unmap(0, nullptr);
     }
 }
 
