@@ -362,8 +362,8 @@ void DirectXRenderer::BulletsSpawnerJob() {
     std::mt19937 gen(rd());  // seed the generator
     std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
     std::default_random_engine generator;
-    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-20.0f));
-    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(20.0f));
+    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-40.0f));
+    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(40.0f));
     static const XMVECTOR bulletStartPos = XMVectorSet(0.0f, 0.0f, -500.0f, 1.0f);
     static const XMVECTOR defaultBulletDir = XMVectorSet(0.0f, 0.0f, 1.0f, 1.0f);  // the default direction is along the Z axis
 
@@ -542,14 +542,15 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
         auto& wall = item.second;
         mWalls.push_back(wall);
         float centerZ = item.first;
-        mWallInstances[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, centerZ, 1.0f);    // Upper Left
-        mWallInstances[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, centerZ, 1.0f);    // Upper Right
+        mWallInstances[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, centerZ, 1.0f);      // Upper Left
+        mWallInstances[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, centerZ, 1.0f);     // Upper Right
         mWallInstances[i].extrudingVectors.r[2] = XMVectorSet(wall.rightX, wall.bottomY, centerZ, 1.0f);  // Bottom right
         mWallInstances[i].extrudingVectors.r[3] = XMVectorSet(wall.leftX, wall.bottomY, centerZ, 1.0f);   // Bottom left
         // since picking rows in vertex shader returns me collumns we need to transpose matrix
-        mWallInstances[i].extrudingVectors = XMMatrixTranspose(mWallInstances[i].extrudingVectors);  
+        mWallInstances[i].extrudingVectors = XMMatrixTranspose(mWallInstances[i].extrudingVectors);
         ++i;
     }
+    mActualWallsAmount = mWalls.size();
 
     static const int wallsBytesCapacity = mWallInstances.size() * sizeof(WallInstance);
     static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + wallsBytesCapacity;
@@ -618,7 +619,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     uploadCommandList->ResourceBarrier(3, barriers);
 
     // BULLETS BUFFER BEING STORED ON GPU\CPU accessible memory since it's constantly changing
-    static const int bulletsBytesCapacity = BULLETS_AMOUNT * sizeof(DirectX::XMVECTOR);
+    static const int bulletsBytesCapacity = BULLETS_AMOUNT * sizeof(BulletManager::BulletInstance);
     static const auto uploadBulletsBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(bulletsBytesCapacity);
 
     mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &uploadBulletsBufferDesc,
@@ -626,7 +627,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     mBulletsBufferView.BufferLocation = mBulletsBuffer->GetGPUVirtualAddress();
     mBulletsBufferView.SizeInBytes = bulletsBytesCapacity;
-    mBulletsBufferView.StrideInBytes = sizeof(DirectX::XMVECTOR);
+    mBulletsBufferView.StrideInBytes = sizeof(BulletManager::BulletInstance);
 
     // now when walls are ready
     mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed);
@@ -704,7 +705,7 @@ void DirectXRenderer::CreatePipelineStateObject() {
 
     // PSO for BULLET
     static const D3D12_INPUT_ELEMENT_DESC bulletLayout[] = {
-        {"INSTANCEPOS", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 0}};
+        {"INSTANCEPOS", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1}};
 
     ComPtr<ID3DBlob> vertexShaderBullet;
     hr = D3DCompile(shaders::vs_bullet_shader, sizeof(shaders::vs_bullet_shader), "", nullptr, nullptr, "VS_main",
@@ -762,7 +763,7 @@ void DirectXRenderer::CreateConstantBuffer() {
         static const auto constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(ConstantBuffer));
 
         mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
-                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mConstantBuffers[i]));
+                                         D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_PPV_ARGS(&mConstantBuffers[i]));
 
         void* p;
         mConstantBuffers[i]->Map(0, nullptr, &p);
@@ -783,8 +784,8 @@ void DirectXRenderer::UpdateConstantBuffer() {
             } else {
                 ++mActualWallsAmount;
             }
-            mConstantBufferData.isWallDestroyed[index] = (packedDestroyingFlag << (i % 32));
-        }   
+            mConstantBufferData.isWallDestroyed[index] |= (packedDestroyingFlag << (i % 32));
+        }
         void* data;
         mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);
         memcpy(data, &mConstantBufferData, sizeof(mConstantBufferData));
@@ -793,11 +794,11 @@ void DirectXRenderer::UpdateConstantBuffer() {
 }
 
 void DirectXRenderer::UpdateBulletsBuffer() {
-    const std::vector<DirectX::XMVECTOR>& instaces = mBulletMngr.getBulletsGPUData();
+    const std::vector<BulletManager::BulletInstance>& instaces = mBulletMngr.getBulletsGPUData();
     if (!instaces.empty()) {
         void* data;
         mBulletsBuffer->Map(0, nullptr, &data);
-        memcpy(data, instaces.data(), sizeof(DirectX::XMVECTOR) * instaces.size());
+        memcpy(data, instaces.data(), sizeof(BulletManager::BulletInstance) * instaces.size());
         mBulletsBuffer->Unmap(0, nullptr);
     }
 }

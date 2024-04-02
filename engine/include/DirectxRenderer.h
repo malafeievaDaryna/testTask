@@ -16,8 +16,8 @@
 class Window;
 
 class DirectXRenderer {
-    static constexpr uint32_t BULLETS_AMOUNT = 1000000;
-    static constexpr uint32_t WALLS_AMOUNT = 100000;
+    static constexpr uint32_t BULLETS_AMOUNT = 100;
+    static constexpr uint32_t WALLS_AMOUNT = 35;
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
     static constexpr DXGI_FORMAT DEPTH_FORMAT = DXGI_FORMAT_D32_FLOAT;
     static constexpr float zFar = 1000.0f;

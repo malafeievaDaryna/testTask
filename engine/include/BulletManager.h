@@ -31,6 +31,12 @@ public:
         }
     };
 
+    struct BulletInstance {
+        DirectX::XMFLOAT3 pos;
+        BulletInstance(const DirectX::XMFLOAT3& _pos) : pos(_pos) {
+        }
+    };
+
     BulletManager(std::vector<utils::Wall>& walls);
     ~BulletManager() = default;
 
@@ -39,7 +45,7 @@ public:
     uint32_t getBulletsAmount() {
         return mBullets.size();
     }
-    const std::vector<DirectX::XMVECTOR>& getBulletsGPUData() {
+    const std::vector<BulletInstance>& getBulletsGPUData() {
         return mBulletInstances;
     }
 
@@ -53,5 +59,5 @@ private:
     std::vector<Bullet> mBullets;
     std::vector<Bullet> mBulletsSwap; // intermediate storage
     std::mutex mSyncMngr;
-    std::vector<DirectX::XMVECTOR> mBulletInstances;  // gpu data
+    std::vector<BulletInstance> mBulletInstances;  // gpu data
 };

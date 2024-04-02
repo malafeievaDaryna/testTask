@@ -116,7 +116,10 @@ void BulletManager::Update(float time_sec) {
                 mWalls[bullet.idOfTheWall].isDestroyed = true;
             }
         } else {
-            mBulletInstances.push_back(XMVectorAdd(bullet.pos, time_sec * bullet.speed * bullet.dir));
+            auto posVec = XMVectorAdd(bullet.pos, (time_sec - bullet.time_creation) * bullet.speed * bullet.dir);
+            XMFLOAT3 pos;
+            XMStoreFloat3(&pos, posVec);
+            mBulletInstances.emplace_back(pos);
             mBulletsSwap.push_back(bullet);  // stores in swap buffer
         }
     }
