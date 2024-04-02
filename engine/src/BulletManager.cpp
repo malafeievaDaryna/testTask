@@ -8,8 +8,8 @@ static float EPSILON = std::numeric_limits<float>::epsilon();
 }
 
 BulletManager::BulletManager(std::vector<utils::Wall>& walls) : mWalls(walls) {
-    mBullets.reserve(1500000);  // we can have at most ~1 million bullets at once
-    mBulletsSwap.reserve(1500000);
+    mBullets.reserve(1000000);  // we can have at most ~1 million bullets at once
+    mBulletsSwap.reserve(1000000);
 }
 
 // return false if there is no intersection, the time and point of intersection returned over param out_...
@@ -122,6 +122,7 @@ void BulletManager::Update(float time_sec) {
     if (!mBulletsSwap.empty()) {
         mBullets = mBulletsSwap;
     }
+    mBulletsAmount.store(mBullets.size(), std::memory_order_relaxed);
 }
 
 void BulletManager::Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time) {
@@ -129,4 +130,5 @@ void BulletManager::Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& 
     float distanceToOrigin =
         XMVectorGetX(XMVector3Length(XMVectorAdd(pos, life_time * speed * dir)));  // length of the final position of the bullet
     mBullets.emplace_back(pos, dir, speed, time, life_time, distanceToOrigin);
+    mBulletsAmount.store(mBullets.size(), std::memory_order_relaxed);
 }

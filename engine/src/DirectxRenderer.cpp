@@ -102,7 +102,8 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(D3D_FEATURE_LEVEL minimumFeatur
 }
 }  // namespace
 
-DirectXRenderer::DirectXRenderer() : mWindow{nullptr, nullptr}, mWallInstance(WALLS_AMOUNT, WallInstance{}), mBulletMngr(mWalls) {
+DirectXRenderer::DirectXRenderer()
+    : mWindow{nullptr, nullptr}, mWallInstances(WALLS_AMOUNT, WallInstance{}), mBulletMngr(mWalls) {
     mWalls.reserve(100000); // we can have at most ~100000 walls at once
 }
 
@@ -129,8 +130,8 @@ void DirectXRenderer::Render() {
     ImGui::SetWindowFontScale(1.3);
     ImGui::Text("FPS %d", FPS);
     ImGui::Text("MIN FPS %d", MIN_FPS);
-    ImGui::Text("WALLS AMOUNT %d", WALLS_AMOUNT);
-    ImGui::Text("BULLETS AMOUNT %d", mBulletMngr.getBullets().size());
+    ImGui::Text("WALLS AMOUNT %d", mActualWallsAmount);
+    ImGui::Text("BULLETS AMOUNT %d", mBulletMngr.getBulletsAmount());
     if (ImGui::Button("spawn 1000000 bullets", ImVec2(200, 50))) {
         mBulletsSpawningStops.clear(std::memory_order_relaxed);
     }
@@ -352,12 +353,12 @@ void DirectXRenderer::BulletsSpawnerJob() {
     static const XMVECTOR defaultBulletDir = XMVectorSet(0.0f, 0.0f, 1.0f, 1.0f);  // the default direction is along the Z axis
 
     mBulletsSpawningStops.test_and_set(std::memory_order_relaxed); // initiate with true value to suppress creation of bullets
-    while (mBulletsSpawnerThreadInterapter.test_and_set(std::memory_order_relaxed)) {
+    while (mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed)) {
         if (mBulletsSpawningStops.test_and_set(std::memory_order_relaxed)) {
             // bullets generator inactive
             continue;
         }
-        for (std::size_t i = 0u; i < 1000000; ++i) {
+        for (std::size_t i = 0u; i < BULLETS_AMOUNT; ++i) {       // 1 million bullets
             float factorInterpolation = randomFloats(generator);  // some percentage between quaternions
             auto interpolatedQuatRotation =
                 XMQuaternionSlerp(minRotation, maxRotation,
@@ -370,12 +371,15 @@ void DirectXRenderer::BulletsSpawnerJob() {
             XMStoreFloat3(&_bulletDir, bulletDir);
             // log_debug("random bullet dir:", _bulletDir.x, _bulletDir.y, _bulletDir.z);
 #endif
-            float speed = 1000.0f + randomFloats(generator) * 1000.0f;  // m/s
+            float speed = 100.0f + randomFloats(generator) * 500.0f;  // m/s
             float timeOfCreationS = mGlobalLifeCycleTimeMS / 1000.0f;
             float lifeTime = randomFloats(generator) * 5.0f;
             mBulletMngr.Fire(bulletStartPos, bulletDir, speed, timeOfCreationS, lifeTime);
             std::this_thread::sleep_for(1ms);
-        }    
+            if (!mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed)) {
+                return;
+            }
+        }
     }
 }
 
@@ -521,16 +525,16 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
         auto& wall = item.second;
         mWalls.push_back(wall);
         float centerZ = item.first;
-        mWallInstance[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, centerZ, 1.0f);     // Upper Left
-        mWallInstance[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, centerZ, 1.0f);    // Upper Right
-        mWallInstance[i].extrudingVectors.r[2] = XMVectorSet(wall.rightX, wall.bottomY, centerZ, 1.0f); // Bottom right
-        mWallInstance[i].extrudingVectors.r[3] = XMVectorSet(wall.leftX, wall.bottomY, centerZ, 1.0f);  // Bottom left
+        mWallInstances[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, centerZ, 1.0f);    // Upper Left
+        mWallInstances[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, centerZ, 1.0f);    // Upper Right
+        mWallInstances[i].extrudingVectors.r[2] = XMVectorSet(wall.rightX, wall.bottomY, centerZ, 1.0f);  // Bottom right
+        mWallInstances[i].extrudingVectors.r[3] = XMVectorSet(wall.leftX, wall.bottomY, centerZ, 1.0f);   // Bottom left
         // since picking rows in vertex shader returns me collumns we need to transpose matrix
-        mWallInstance[i].extrudingVectors = XMMatrixTranspose(mWallInstance[i].extrudingVectors);  
+        mWallInstances[i].extrudingVectors = XMMatrixTranspose(mWallInstances[i].extrudingVectors);  
         ++i;
     }
 
-    static const int wallsBytesCapacity = WALLS_AMOUNT * sizeof(WallInstance);
+    static const int wallsBytesCapacity = mWallInstances.size() * sizeof(WallInstance);
     static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + wallsBytesCapacity;
     static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     static const auto uploadBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
@@ -575,7 +579,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     mUploadBuffer->Map(0, nullptr, &p);
     ::memcpy(p, vertices, sizeof(vertices));
     ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices), indices, sizeof(indices));
-    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &mWallInstance[0], wallsBytesCapacity);
+    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &mWallInstances[0], wallsBytesCapacity);
     mUploadBuffer->Unmap(0, nullptr);
 
     // Copy data from upload buffer on CPU into the index/vertex buffer on
@@ -597,7 +601,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     uploadCommandList->ResourceBarrier(3, barriers);
 
     // now when walls are ready
-    mBulletsSpawnerThreadInterapter.test_and_set(std::memory_order_relaxed);
+    mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed);
     mBulletsSpawnerThread = std::thread(&DirectXRenderer::BulletsSpawnerJob, this);
 }
 
@@ -696,6 +700,10 @@ void DirectXRenderer::CreateRootSignature() {
 }
 
 void DirectXRenderer::CreateConstantBuffer() {
+    mConstantBufferData.mvp = XMMatrixMultiply(mView, mProj);
+    uint32_t sizeOfItem = sizeof(mConstantBufferData.isWallDestroyed[0]);
+    uint32_t amount = sizeof(mConstantBufferData.isWallDestroyed) / sizeOfItem;
+    memset(mConstantBufferData.isWallDestroyed, 0, amount * sizeOfItem); // all walls are visible
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
         static const auto constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(ConstantBuffer));
@@ -711,23 +719,29 @@ void DirectXRenderer::CreateConstantBuffer() {
 }
 
 void DirectXRenderer::UpdateConstantBuffer() {
-    mConstantBufferData.mvp = XMMatrixMultiply(mView, mProj);
-
-    for (std::size_t i = 0u; i < mWalls.size(); ++i) {
-        uint32_t index = i / 32; // producing of packed index
-        uint32_t value = mWalls[i].isDestroyed ? 1u : 0u;
-        mConstantBufferData.isWallDestroyed[index] = (value << (i % 32));
+    // let's don't update all the time, updating needes only when walls changes
+    if (mBulletMngr.getBulletsAmount()) {
+        mActualWallsAmount = 0u;
+        for (std::size_t i = 0u; i < mWalls.size(); ++i) {
+            uint32_t index = i / 32;  // producing of packed index
+            uint32_t packedDestroyingFlag = 0u;
+            if (mWalls[i].isDestroyed) {
+                packedDestroyingFlag = 1u;
+            } else {
+                ++mActualWallsAmount;
+            }
+            mConstantBufferData.isWallDestroyed[index] = (packedDestroyingFlag << (i % 32));
+        }   
+        void* data;
+        mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);
+        memcpy(data, &mConstantBufferData, sizeof(mConstantBufferData));
+        mConstantBuffers[m_currentFrame]->Unmap(0, nullptr);
     }
-
-    void* data;
-    mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);
-    memcpy(data, &mConstantBufferData, sizeof(mConstantBufferData));
-    mConstantBuffers[m_currentFrame]->Unmap(0, nullptr);
 }
 
 void DirectXRenderer::Shutdown() {
     // graceful interruption of the thread
-    mBulletsSpawnerThreadInterapter.clear(std::memory_order_relaxed);
+    mBulletsSpawnerThreadInterupter.clear(std::memory_order_relaxed);
     if (mBulletsSpawnerThread.joinable()) {
         mBulletsSpawnerThread.join();
     }

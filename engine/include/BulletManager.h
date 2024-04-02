@@ -36,8 +36,8 @@ public:
 
     void Update(float time_sec);
     void Fire(const DirectX::XMVECTOR& pos, const DirectX::XMVECTOR& dir, float speed, float time, float life_time);
-    const std::vector<Bullet>& getBullets() {
-        return mBullets;
+    uint32_t getBulletsAmount() {
+        return mBulletsAmount.load(std::memory_order_relaxed);
     }
 
 private:
@@ -49,5 +49,6 @@ private:
     std::vector<utils::Wall>& mWalls;
     std::vector<Bullet> mBullets;
     std::vector<Bullet> mBulletsSwap; // intermediate storage
+    std::atomic<uint32_t> mBulletsAmount;
     std::mutex mSyncMngr;
 };

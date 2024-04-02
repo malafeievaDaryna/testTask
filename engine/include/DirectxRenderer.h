@@ -16,6 +16,7 @@
 class Window;
 
 class DirectXRenderer {
+    static constexpr uint32_t BULLETS_AMOUNT = 1000000;
     static constexpr uint32_t WALLS_AMOUNT = 100000;
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
     static constexpr DXGI_FORMAT DEPTH_FORMAT = DXGI_FORMAT_D32_FLOAT;
@@ -97,9 +98,10 @@ private:
 
     utils::Texture2DResource mWallTextureRes{};
     std::vector<utils::Wall> mWalls{};
-    std::vector<WallInstance> mWallInstance{};  // GPU data only
+    uint32_t mActualWallsAmount{0u}; // all walls including destroyed ones persist for a while but will be discarded and marked as unused
+    std::vector<WallInstance> mWallInstances{};  // GPU data only
     BulletManager mBulletMngr;
     std::thread mBulletsSpawnerThread{};
-    std::atomic_flag mBulletsSpawnerThreadInterapter{ATOMIC_FLAG_INIT};
+    std::atomic_flag mBulletsSpawnerThreadInterupter{ATOMIC_FLAG_INIT};
     std::atomic_flag mBulletsSpawningStops{ATOMIC_FLAG_INIT};
 };
