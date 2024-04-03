@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <thread>
+#include <atomic>
 #include <directxmath.h>
 #include "Utils.h"
 #include "BulletManager.h"
