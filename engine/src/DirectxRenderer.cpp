@@ -397,7 +397,7 @@ void DirectXRenderer::BulletsSpawnerJob() {
 #endif
             float speed = 100.0f + randomFloats(generator) * 500.0f;  // m/s
             float timeOfCreationS = mGlobalLifeCycleTimeMS / 1000.0f;
-            float lifeTime = randomFloats(generator) * 15.0f;
+            float lifeTime = randomFloats(generator) * 60.0f; // 1min
             mBulletMngr.Fire(bulletStartPos, bulletDir, speed, timeOfCreationS, lifeTime);
             std::this_thread::sleep_for(1ms);
             if (!mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed)) {
