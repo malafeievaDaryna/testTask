@@ -16,11 +16,31 @@
 class Window;
 
 class DirectXRenderer {
-    static constexpr uint32_t BULLETS_AMOUNT = 100;
-    static constexpr uint32_t WALLS_AMOUNT = 35;
+    static constexpr uint32_t BULLETS_AMOUNT = 1000000;
+    static constexpr uint32_t WALLS_AMOUNT = 100000;
     static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 3;
     static constexpr DXGI_FORMAT DEPTH_FORMAT = DXGI_FORMAT_D32_FLOAT;
-    static constexpr float zFar = 1000.0f;
+    static constexpr float zFar = 200000.0f;
+
+    // WALL DATA BEING STORED IN ABSOLUTE GPU MEMORY (destroying is visualized by triangle discarding to avoid permanent updating)
+    struct WallVertex {
+        uint32_t extrudingVertexID; // id of Instance matrix row keeping extruding vertex
+        float uv[2];
+    };
+
+    // Declare upload buffer data as 'static' so it persists after returning from this function.
+    // Otherwise, we would need to explicitly wait for the GPU to copy data from the upload buffer
+    // to vertex/index default buffers due to how the GPU processes commands asynchronously.
+    static inline const WallVertex WallVertices[4] {  // Upper Left
+        {0u, {0, 0}},
+        // Upper Right
+        {1u, {1, 0}},
+        // Bottom right
+        {2u, {1, 1}},
+        // Bottom left
+        {3u, {0, 1}}};
+
+    static inline const int WallIndices[6] {0, 1, 2, 2, 3, 0};
 
     // wall Instance consists of 4 extruding vectors for quad positioning (keeping actual vertices of wall like 4 rows of matrix)
     struct WallInstance {

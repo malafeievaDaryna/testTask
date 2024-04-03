@@ -20,11 +20,16 @@
 #include <imgui_impl_dx12.h>
 #include <imgui.h>
 
+// for debugging on poor GPU uncomment the following line
+// #define USING_INTEGRATED_GPU
+
 using namespace Microsoft::WRL;
 using namespace DirectX;
 using namespace utils;
 
 namespace {
+// GPU/ CPU accessive memory
+static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 static const XMVECTOR EYE = XMVectorSet(0, 200, -700, 1);
 static const XMVECTOR TARGET = XMVectorSet(0, 0, 0, 1);
 static const XMVECTOR UP = XMVectorSet(0, 1, 0, 0);
@@ -52,8 +57,8 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(D3D_FEATURE_LEVEL minimumFeatur
 
     SIZE_T maxDedicatedVideoMemory = 0;
     UINT gpuAdapterId = 0u;
+    DXGI_ADAPTER_DESC1 dxgiAdapterDesc;
     for (UINT i = 0u; dxgiFactory->EnumAdapters1(i, &dxgiAdapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-        DXGI_ADAPTER_DESC1 dxgiAdapterDesc;
         dxgiAdapter->GetDesc1(&dxgiAdapterDesc);
 
         // let's try to pickup the discrete gpu (filtering by dedicated video memory that gpu will be favored)
@@ -64,10 +69,11 @@ RenderEnvironment CreateDeviceAndSwapChainHelper(D3D_FEATURE_LEVEL minimumFeatur
             maxDedicatedVideoMemory = dxgiAdapterDesc.DedicatedVideoMemory;
         }
     }
-#if defined(_DEBUG)
+#if defined(_DEBUG) && defined(USING_INTEGRATED_GPU)
     // enforce using integrated gpu if it exists for testing on poor hardware
     if (dxgiFactory->EnumAdapters1(1u, &dxgiAdapter) != DXGI_ERROR_NOT_FOUND) {
         gpuAdapterId = 1u;
+        dxgiAdapter->GetDesc1(&dxgiAdapterDesc);
     }
 #endif
      
@@ -362,8 +368,8 @@ void DirectXRenderer::BulletsSpawnerJob() {
     std::mt19937 gen(rd());  // seed the generator
     std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
     std::default_random_engine generator;
-    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-40.0f));
-    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(40.0f));
+    static const XMVECTOR minRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(-60.0f));
+    static const XMVECTOR maxRotation = XMQuaternionRotationNormal(UP, XMConvertToRadians(60.0f));
     static const XMVECTOR bulletStartPos = XMVectorSet(0.0f, 0.0f, -500.0f, 1.0f);
     static const XMVECTOR defaultBulletDir = XMVectorSet(0.0f, 0.0f, 1.0f, 1.0f);  // the default direction is along the Z axis
 
@@ -388,7 +394,7 @@ void DirectXRenderer::BulletsSpawnerJob() {
 #endif
             float speed = 100.0f + randomFloats(generator) * 500.0f;  // m/s
             float timeOfCreationS = mGlobalLifeCycleTimeMS / 1000.0f;
-            float lifeTime = randomFloats(generator) * 5.0f;
+            float lifeTime = randomFloats(generator) * 15.0f;
             mBulletMngr.Fire(bulletStartPos, bulletDir, speed, timeOfCreationS, lifeTime);
             std::this_thread::sleep_for(1ms);
             if (!mBulletsSpawnerThreadInterupter.test_and_set(std::memory_order_relaxed)) {
@@ -484,26 +490,6 @@ void DirectXRenderer::Initialize(const std::string& title, int width, int height
 }
 
 void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommandList) {
-    // WALL DATA BEING STORED IN ABSOLUTE GPU MEMORY (destroying is visualized by triangle discarding to avoid permanent updating)
-    struct Vertex {
-        uint32_t extrudingVertexID;
-        float uv[2];
-    };
-
-    // Declare upload buffer data as 'static' so it persists after returning from this function.
-    // Otherwise, we would need to explicitly wait for the GPU to copy data from the upload buffer
-    // to vertex/index default buffers due to how the GPU processes commands asynchronously.
-    static const Vertex vertices[4] = {// Upper Left
-                                       {0u, {0, 0}},
-                                       // Upper Right
-                                       {1u, {1, 0}},
-                                       // Bottom right
-                                       {2u, {1, 1}},
-                                       // Bottom left
-                                       {3u, {0, 1}}};
-
-    static const int indices[6] = {0, 1, 2, 2, 3, 0};
-
     //-----------------------------------------------------//
     // THE WALL GENERATOR
     std::random_device rd;
@@ -515,8 +501,8 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     utils::Wall wall;
     std::multimap<float, utils::Wall> sortedWallsByZ;
     for (std::size_t i = 0u; i < WALLS_AMOUNT; ++i) {
-        float centerZ = randomFloats(generator) * 0.3 * zFar;  // in positive Z axis
-        float centerX = (2.0f * randomFloats(generator) - 1.0f) * 0.3 * zFar;
+        float centerZ = randomFloats(generator) * WALLS_AMOUNT;  // in positive Z axis
+        float centerX = (2.0f * randomFloats(generator) - 1.0f) * 0.3 * 2000;
         float centerY = 0.0f;
         wall.center = XMVectorSet(centerX, centerY, centerZ, 1.0f);
         wall.distanceToOrigin = XMVectorGetX(XMVector3Length(wall.center));
@@ -538,22 +524,24 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     // Important !!! sorting walls by ascending order of Z component to get benefit of early depth test
     std::size_t i = 0u;
+    float zBias = 0.01f;
     for (auto& item : sortedWallsByZ) {
         auto& wall = item.second;
+        //wall.centerZ += zBias;
         mWalls.push_back(wall);
-        float centerZ = item.first;
-        mWallInstances[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, centerZ, 1.0f);      // Upper Left
-        mWallInstances[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, centerZ, 1.0f);     // Upper Right
-        mWallInstances[i].extrudingVectors.r[2] = XMVectorSet(wall.rightX, wall.bottomY, centerZ, 1.0f);  // Bottom right
-        mWallInstances[i].extrudingVectors.r[3] = XMVectorSet(wall.leftX, wall.bottomY, centerZ, 1.0f);   // Bottom left
+        mWallInstances[i].extrudingVectors.r[0] = XMVectorSet(wall.leftX, wall.topY, wall.centerZ, 1.0f);  // Upper Left
+        mWallInstances[i].extrudingVectors.r[1] = XMVectorSet(wall.rightX, wall.topY, wall.centerZ, 1.0f);  // Upper Right
+        mWallInstances[i].extrudingVectors.r[2] = XMVectorSet(wall.rightX, wall.bottomY, wall.centerZ, 1.0f);  // Bottom right
+        mWallInstances[i].extrudingVectors.r[3] = XMVectorSet(wall.leftX, wall.bottomY, wall.centerZ, 1.0f);   // Bottom left
         // since picking rows in vertex shader returns me collumns we need to transpose matrix
         mWallInstances[i].extrudingVectors = XMMatrixTranspose(mWallInstances[i].extrudingVectors);
         ++i;
+        zBias += 0.01f;
     }
     mActualWallsAmount = mWalls.size();
 
     static const int wallsBytesCapacity = mWallInstances.size() * sizeof(WallInstance);
-    static const int uploadBufferSize = sizeof(vertices) + sizeof(indices) + wallsBytesCapacity;
+    static const int uploadBufferSize = sizeof(WallVertices) + sizeof(WallIndices) + wallsBytesCapacity;
     static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
     static const auto uploadBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize);
 
@@ -566,11 +554,11 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     // so we don't have to transition into this before copying into them
     static const auto defaultHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 
-    static const auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices));
+    static const auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(WallVertices));
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &vertexBufferDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mWallVertexBuffer));
 
-    static const auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(indices));
+    static const auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(WallIndices));
     mDevice->CreateCommittedResource(&defaultHeapProperties, D3D12_HEAP_FLAG_NONE, &indexBufferDesc,
                                      D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&mWallIndexBuffer));
 
@@ -580,11 +568,11 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
 
     // Create buffer views
     mWallVertexBufferView.BufferLocation = mWallVertexBuffer->GetGPUVirtualAddress();
-    mWallVertexBufferView.SizeInBytes = sizeof(vertices);
-    mWallVertexBufferView.StrideInBytes = sizeof(Vertex);
+    mWallVertexBufferView.SizeInBytes = sizeof(WallVertices);
+    mWallVertexBufferView.StrideInBytes = sizeof(WallVertex);
 
     mWallIndexBufferView.BufferLocation = mWallIndexBuffer->GetGPUVirtualAddress();
-    mWallIndexBufferView.SizeInBytes = sizeof(indices);
+    mWallIndexBufferView.SizeInBytes = sizeof(WallIndices);
     mWallIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
 
     // Create buffer views
@@ -595,17 +583,18 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     // Copy data on CPU into the upload buffer
     void* p;
     mWallUploadBuffer->Map(0, nullptr, &p);
-    ::memcpy(p, vertices, sizeof(vertices));
-    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices), indices, sizeof(indices));
-    ::memcpy(static_cast<unsigned char*>(p) + sizeof(vertices) + sizeof(indices), &mWallInstances[0], wallsBytesCapacity);
+    ::memcpy(p, WallVertices, sizeof(WallVertices));
+    ::memcpy(static_cast<unsigned char*>(p) + sizeof(WallVertices), WallIndices, sizeof(WallIndices));
+    ::memcpy(static_cast<unsigned char*>(p) + sizeof(WallVertices) + sizeof(WallIndices), &mWallInstances[0], wallsBytesCapacity);
     mWallUploadBuffer->Unmap(0, nullptr);
 
     // Copy data from upload buffer on CPU into the index/vertex buffer on
     // the GPU
-    uploadCommandList->CopyBufferRegion(mWallVertexBuffer.Get(), 0, mWallUploadBuffer.Get(), 0, sizeof(vertices));
-    uploadCommandList->CopyBufferRegion(mWallIndexBuffer.Get(), 0, mWallUploadBuffer.Get(), sizeof(vertices), sizeof(indices));
-    uploadCommandList->CopyBufferRegion(mWallInstanceBuffer.Get(), 0, mWallUploadBuffer.Get(), sizeof(vertices) + sizeof(indices),
-                                        wallsBytesCapacity);
+    uploadCommandList->CopyBufferRegion(mWallVertexBuffer.Get(), 0, mWallUploadBuffer.Get(), 0, sizeof(WallVertices));
+    uploadCommandList->CopyBufferRegion(mWallIndexBuffer.Get(), 0, mWallUploadBuffer.Get(), sizeof(WallVertices),
+                                        sizeof(WallIndices));
+    uploadCommandList->CopyBufferRegion(mWallInstanceBuffer.Get(), 0, mWallUploadBuffer.Get(),
+                                        sizeof(WallVertices) + sizeof(WallIndices), wallsBytesCapacity);
 
     // Barriers, batch them together
     const CD3DX12_RESOURCE_BARRIER barriers[3] = {
@@ -757,11 +746,10 @@ void DirectXRenderer::CreateConstantBuffer() {
     mConstantBufferData.mvp = XMMatrixMultiply(mView, mProj);
     uint32_t sizeOfItem = sizeof(mConstantBufferData.isWallDestroyed[0]);
     uint32_t amount = sizeof(mConstantBufferData.isWallDestroyed) / sizeOfItem;
-    memset(mConstantBufferData.isWallDestroyed, 0, amount * sizeOfItem); // all walls are visible
+    memset(mConstantBufferData.isWallDestroyed, std::numeric_limits<int32_t>::max(),
+           amount * sizeOfItem);  // all walls are invisible
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        static const auto uploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
         static const auto constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(ConstantBuffer));
-
         mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
                                          D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_PPV_ARGS(&mConstantBuffers[i]));
 
@@ -773,24 +761,22 @@ void DirectXRenderer::CreateConstantBuffer() {
 }
 
 void DirectXRenderer::UpdateConstantBuffer() {
-    // let's don't update all the time, updating needes only when walls changes
-    if (mBulletMngr.getBulletsAmount()) {
-        mActualWallsAmount = 0u;
-        for (std::size_t i = 0u; i < mWalls.size(); ++i) {
-            uint32_t index = i / 32;  // producing of packed index
-            uint32_t packedDestroyingFlag = 0u;
-            if (mWalls[i].isDestroyed) {
-                packedDestroyingFlag = 1u;
-            } else {
-                ++mActualWallsAmount;
-            }
-            mConstantBufferData.isWallDestroyed[index] |= (packedDestroyingFlag << (i % 32));
-        }
-        void* data;
-        mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);
-        memcpy(data, &mConstantBufferData, sizeof(mConstantBufferData));
-        mConstantBuffers[m_currentFrame]->Unmap(0, nullptr);
-    }
+    // TODO we can consider not updating all the time since updating needes only when walls changes
+    // but due to some restriction like we are able to update only one mConstantBufferData (with currently processed index m_currentFrame) out of three
+   mActualWallsAmount = 0u;
+   for (std::size_t i = 0u; i < mWalls.size(); ++i) {
+       uint32_t index = i / 32;  // producing of packed index
+       if (mWalls[i].isDestroyed) {
+           mConstantBufferData.isWallDestroyed[index] |= ((uint32_t) 1 << (i % 32));
+       } else {
+           mConstantBufferData.isWallDestroyed[index] &= ~((uint32_t) 1 << (i % 32));
+           ++mActualWallsAmount;
+       }
+   }
+   void* data;
+   mConstantBuffers[m_currentFrame]->Map(0, nullptr, &data);
+   memcpy(data, &mConstantBufferData, sizeof(mConstantBufferData));
+   mConstantBuffers[m_currentFrame]->Unmap(0, nullptr);
 }
 
 void DirectXRenderer::UpdateBulletsBuffer() {

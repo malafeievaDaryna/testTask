@@ -65,17 +65,34 @@ void BulletManager::Update(float time_sec) {
     mBulletInstances.clear();
     for (auto& bullet : mBullets) {
         bool checkingWallsNeeded = true;
+        float timeDif = (time_sec - bullet.time_creation);
         // if we already know about the posible collision then we don't need to make any calculations twice
         if (bullet.isPrecalculationCollision) {
             // if the wall being checked is already destroyed then look for new wall from the beginning
             if (bullet.idOfTheWall >= 0 && mWalls[bullet.idOfTheWall].isDestroyed) {
                 bullet.isPrecalculationCollision = false;
                 bullet.idOfTheWall = -1;
-            } else if (bullet.idOfTheWall >= 0 && (time_sec - bullet.time_creation) >= bullet.timeOfCollisionWithWallS) {
+            } else if (bullet.idOfTheWall >= 0 && timeDif >= bullet.timeOfCollisionWithWallS) {
                 mWalls[bullet.idOfTheWall].isDestroyed = true;
+
+                // reflection
+                if (bullet.time_creation + bullet.life_time > time_sec) {
+                    auto pos = XMVectorAdd(bullet.pos, (time_sec - bullet.time_creation) * bullet.speed * bullet.dir);
+                    bullet.pos = pos;
+                    bullet.time_creation = time_sec;
+                    timeDif = 0;
+                    bullet.dir = XMVector3Reflect(bullet.dir, mWalls[bullet.idOfTheWall].normal);
+                    bullet.isPrecalculationCollision = false;
+                    bullet.idOfTheWall = -1;
+                    bullet.timeOfCollisionWithWallS = -1;
+                    bullet.life_time = bullet.life_time - timeDif;
+                    bullet.distanceToOrigin = XMVectorGetX(XMVector3Length(XMVectorAdd(
+                        pos, bullet.life_time * bullet.speed * bullet.dir)));  // length of the final position of the bullet
+                    checkingWallsNeeded = true; // loking for new intersection
+                } else {
+                    checkingWallsNeeded = false;
+                }
                 // utils::log_debug("WALL destroyed");
-                // TODO reflection;
-                continue;
             } else {
                 // no any collisions with this bullet
                 // no need to make any calculations twice let's skip all walls for this bullet
@@ -94,7 +111,7 @@ void BulletManager::Update(float time_sec) {
                 if ((bullet.distanceToOrigin + EPSILON) < wall.distanceToOrigin) {
                     break;
                 }
-                if (getTimeOfIntersection(time_sec - bullet.time_creation, bullet, wall, timeOfCollisionWithWallS,
+                if (getTimeOfIntersection(timeDif, bullet, wall, timeOfCollisionWithWallS,
                                           intersectionPoint)) {
                     /*utils::log_debug("intersection happens at point", intersectionPoint.x, intersectionPoint.y,
                                         intersectionPoint.z, " time ", timeIntersection);*/
@@ -116,7 +133,7 @@ void BulletManager::Update(float time_sec) {
                 mWalls[bullet.idOfTheWall].isDestroyed = true;
             }
         } else {
-            auto posVec = XMVectorAdd(bullet.pos, (time_sec - bullet.time_creation) * bullet.speed * bullet.dir);
+            auto posVec = XMVectorAdd(bullet.pos, timeDif * bullet.speed * bullet.dir);
             XMFLOAT3 pos;
             XMStoreFloat3(&pos, posVec);
             mBulletInstances.emplace_back(pos);
