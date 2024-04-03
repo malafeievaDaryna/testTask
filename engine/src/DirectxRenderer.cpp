@@ -23,6 +23,9 @@
 // for debugging on poor GPU uncomment the following line
 // #define USING_INTEGRATED_GPU
 
+// ALOW_TEARING for G-SYNC monitor
+// #define ALOW_TEARING
+
 using namespace Microsoft::WRL;
 using namespace DirectX;
 using namespace utils;
@@ -612,7 +615,7 @@ void DirectXRenderer::CreateMeshBuffers(ID3D12GraphicsCommandList* uploadCommand
     static const auto uploadBulletsBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(bulletsBytesCapacity);
 
     mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &uploadBulletsBufferDesc,
-                                     D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_PPV_ARGS(&mBulletsBuffer));
+                                     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mBulletsBuffer));
 
     mBulletsBufferView.BufferLocation = mBulletsBuffer->GetGPUVirtualAddress();
     mBulletsBufferView.SizeInBytes = bulletsBytesCapacity;
@@ -751,7 +754,7 @@ void DirectXRenderer::CreateConstantBuffer() {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         static const auto constantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(sizeof(ConstantBuffer));
         mDevice->CreateCommittedResource(&uploadHeapProperties, D3D12_HEAP_FLAG_NONE, &constantBufferDesc,
-                                         D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER, nullptr, IID_PPV_ARGS(&mConstantBuffers[i]));
+                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&mConstantBuffers[i]));
 
         void* p;
         mConstantBuffers[i]->Map(0, nullptr, &p);
@@ -808,15 +811,15 @@ void DirectXRenderer::Shutdown() {
 // checking for G-SYNC or Free-Sync availability to avoid v-sync and posibble cpu blocking
 bool DirectXRenderer::CheckTearingSupport() {
     BOOL allowTearing = FALSE;
-
+#if defined(ALOW_TEARING)
     ComPtr<IDXGIFactory5> factory;
     if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
         if (FAILED(factory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))) {
             allowTearing = FALSE;
         }
     }
-
-    return allowTearing == TRUE;
+#endif
+    return allowTearing;
 }
 
 void DirectXRenderer::CreateDeviceAndSwapChain() {
